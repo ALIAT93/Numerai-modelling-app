@@ -1,21 +1,18 @@
-from typing import Tuple
-import matplotlib.pyplot as plt
 from numerapi import NumerAPI
 import json
 import pandas as pd
-import sqlite3
 import os
 import re
-from enum import Enum
 from lightgbm import LGBMRegressor
 import cloudpickle
 import sys
-import shutil
 import certifi
 import urllib3
 import logging
-from sklearn.ensemble import HistGradientBoostingRegressor
 import platform
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 
 http = urllib3.PoolManager(
     cert_reqs='CERT_REQUIRED',
@@ -25,19 +22,14 @@ http = urllib3.PoolManager(
 # import the 2 scoring functions
 from numerai_tools.scoring import numerai_corr, correlation_contribution
 
-from PySide6.QtGui import  QGuiApplication, QFont, QFontMetrics, QPainterPath, QColor ,QGradient, QPen, QLinearGradient, QPainter
-from PySide6.QtCore import Qt, QPointF, QRectF, QRect ,QDateTime,QCoreApplication
+from PySide6.QtGui import QPixmap, QValidator
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QGraphicsItem, QGraphicsSimpleTextItem, QSplitter, QScrollArea,
-    QWidget, QListWidget, QTableWidgetItem, QListWidgetItem, QTableWidget, QSpacerItem,
-    QProgressBar, QSizePolicy, QAbstractItemView, QSizePolicy, QComboBox,
-    QVBoxLayout, QHBoxLayout, QTabWidget, QTextEdit, QLineEdit, QFileDialog,
+    QApplication, QMainWindow, QSplitter, QWidget, QListWidget, QTableWidgetItem, QListWidgetItem, QTableWidget, QSizePolicy, QAbstractItemView, QSizePolicy, QComboBox,
+    QVBoxLayout, QHBoxLayout, QTextEdit, QLineEdit, QFileDialog,
     QLabel, QPushButton, QMessageBox,QStackedWidget
 )
-from PySide6.QtCharts import (
-    QChart, QChartView, QLineSeries, QValueAxis, QDateTimeAxis, QScatterSeries,
-    QSplineSeries,QAreaSeries
-)
+
 
 # Create a class for the main platform UI
 
@@ -69,14 +61,10 @@ class Platform(QWidget):
         self.default_folder_path = self.get_default_folder_path()
         self.dynamic_folder_path = None
         
-        self.read_parquet_train_file = None
-        self.trained_model = None
-        self.Validation_Model = None
-        
         #Define Feature Set and File Parameters
         self.selected_feature_file = None
         self.selected_feature_set= None
-        self.selected_feature_sets_all_features = None
+        # self.selected_feature_sets_all_features = None
         self.num_of_features = None
         self.live_features_stored = None
          
@@ -86,7 +74,6 @@ class Platform(QWidget):
    
         #Connect List Widget to NumerAi function
         self.function_Download_all_available_datasets_numerAi()
-        # self.function_update_downloaded_datasets_table()
         
         # Create instances of  redirectors
         self.stdout_redirector = StdoutRedirector(text_widget=self.terminal_widget)
@@ -95,6 +82,10 @@ class Platform(QWidget):
         # Redirect sys.stdout and sys.stderr to your redirectors
         sys.stdout = self.stdout_redirector
         sys.stderr = self.stderr_redirector
+        
+        # Initialize a dictionary to store trained models
+        self.trained_models = {}
+        
         
     def initialize_all_layouts(self) -> None:
         """
@@ -133,10 +124,11 @@ class Platform(QWidget):
              font-size: 18;
         """
         # Create button
-        self.button_train_model_step_1 = self.function_create_button("Train", column_0_layout_internal, self.hide_other_layouts, button_style)
-        self.button_validate_model_step_2= self.function_create_button("Validate", column_0_layout_internal, self.hide_other_layouts,button_style)
-        self.button_peformance_metrics_step_3 = self.function_create_button("Peformance", column_0_layout_internal, self.hide_other_layouts,button_style)
+        self.button_train_model_step_1 = self.function_create_button("Datasets", column_0_layout_internal, self.hide_other_layouts, button_style)
+        self.button_validate_model_step_2= self.function_create_button("Train", column_0_layout_internal, self.hide_other_layouts,button_style)
         self.button_live_model_step_4 = self.function_create_button("Muti-Automate", column_0_layout_internal, self.hide_other_layouts,button_style)
+        self.button_peformance_metrics_step_3 = self.function_create_button("Tables", column_0_layout_internal, self.hide_other_layouts,button_style)
+
         # Add internal layout to the main layout
         self.Column_0_menu_layout.addLayout(column_0_layout_internal)
                        
@@ -158,7 +150,7 @@ class Platform(QWidget):
             header_widget.setStyleSheet("background-color: #F9FFFF;")
             
             # Create the label for displaying button text
-            self.button_label = QLabel("Select button to commence")
+            self.button_label = QLabel("Datasets")
             self.button_label.setStyleSheet("font-size: 19px; color: #000000; font-family: Arial;")
             column_2_layout_internal_Header.addWidget(self.button_label)
 
@@ -168,20 +160,18 @@ class Platform(QWidget):
             self.Column_2_Body_model_layout.addWidget(self.body_widget)
 
             # Create and add different pages to the stacked widget
+            self.column_2_layout_internal_dataset = self.set_layout_dataset()
             self.column_2_layout_internal_train = self.set_layout_to_train()
-            self.column_2_layout_internal_Validate = self.set_layout_to_validate()
-            self.column_2_layout_internal_Peforomance = self.set_layout_to_peformance()
             self.column_2_layout_internal_Live = self.set_layout_to_Automate()
+            self.column_2_layout_internal_Peforomance = self.set_layout_to_peformance()
 
+            self.body_widget.addWidget(self.column_2_layout_internal_dataset)
             self.body_widget.addWidget(self.column_2_layout_internal_train)
-            self.body_widget.addWidget(self.column_2_layout_internal_Validate)
-            self.body_widget.addWidget(self.column_2_layout_internal_Peforomance)
             self.body_widget.addWidget(self.column_2_layout_internal_Live)
-
+            self.body_widget.addWidget(self.column_2_layout_internal_Peforomance)
             # Hide all pages initially
             self.body_widget.setCurrentIndex(0)
             
-        
             # Create the end widget
             end_widget = QWidget()
             end_widget.setStyleSheet("background-color: #F9FFFF;")
@@ -209,7 +199,7 @@ class Platform(QWidget):
             print(f"Error initializing Column 2 body model layout: {e}")
     
             
-    def set_layout_to_train(self):
+    def set_layout_dataset(self):
         page_widget = QWidget()
         layout = QHBoxLayout(page_widget)
 
@@ -224,7 +214,7 @@ class Platform(QWidget):
         """
         
         label_style = """
-            background-color: #FCFCFC;
+            background-color: #DEDEDC;
             color: #000000;
             font-family: Noto Sans Tangsa;
             font-size: 12px;
@@ -235,14 +225,7 @@ class Platform(QWidget):
             color: #000000;
             border: 1px solid #CCCCCC;
         """
-           
-        combobox_style = """
-            color: #F9FFFF;
-            font-size: 12px;
-            font-family: Arial;
-            background-color: #416096;
-            border: 1px solid #CCCCCC;
-        """     
+ 
         lineedit_style = """
             color: #000000;
             font-size: 14px;
@@ -254,19 +237,7 @@ class Platform(QWidget):
             selection-background-color: #BFE6FF;
             selection-color: #000000;
         """
-        
-        Table_style = """
-        color: #000000;
-        font-size: 9px;
-        font-family: Arial;
-        background-color: #FFFFFF;
-        border: 1px solid #CCCCCC;
-        border-radius: 2px;
-        padding: 2px;
-        selection-background-color: #BFE6FF;
-        selection-color: #000000;
-        """
-        
+
         self.function_create_label("NUMERAI Available Datasets", left_column_layout,label_style)
 
         self.list_widget_all_datasets = QListWidget()
@@ -288,48 +259,103 @@ class Platform(QWidget):
         self.list_Widget_Availabile_Downloaded_Datasets = QListWidget()
         self.list_Widget_Availabile_Downloaded_Datasets.setStyleSheet(list_style)
         
-        
         self.function_update_downloaded_datasets_list(self.default_folder_path) 
         left_column_layout.addWidget(self.list_Widget_Availabile_Downloaded_Datasets)
 
-        self.function_create_label("Features List - Select One", left_column_layout,label_style)
-        
-        self.list_Widget_Features_Downloaded_Datasets= QListWidget()
-        self.list_Widget_Features_Downloaded_Datasets.setStyleSheet(list_style)
-        left_column_layout.addWidget(self.list_Widget_Features_Downloaded_Datasets)
-        self.list_Widget_Features_Downloaded_Datasets.itemClicked.connect(self.function_display_feature_list)  
-
-        self.function_create_label("Features List Contents - Select One", left_column_layout,label_style)
-        
-        self.list_widget_features_content= QListWidget()
-        self.list_widget_features_content.setStyleSheet(list_style)
-        left_column_layout.addWidget(self.list_widget_features_content)
-        self.list_widget_features_content.itemClicked.connect(self.function_handle_feature_list_change)
-
-        self.metadata_widget = QWidget()  
-        metadata_layout = QVBoxLayout()    
-        self.metadata_widget.setLayout(metadata_layout)
-        left_column_layout.addWidget(self.metadata_widget)
-        
         layout.addLayout(left_column_layout)
-        
         
         # Right column
         right_column_layout = QVBoxLayout()   
+
+        self.function_create_label("Features List - Select One", right_column_layout,label_style)
+        
+        self.list_Widget_Features_Downloaded_Datasets= QListWidget()
+        self.list_Widget_Features_Downloaded_Datasets.setStyleSheet(list_style)
+        right_column_layout.addWidget(self.list_Widget_Features_Downloaded_Datasets)
+        self.list_Widget_Features_Downloaded_Datasets.itemClicked.connect(self.function_display_feature_list)  
+
+        self.function_create_label("Features List Contents - Select One", right_column_layout,label_style)
+        
+        self.list_widget_features_content= QListWidget()
+        self.list_widget_features_content.setStyleSheet(list_style)
+        right_column_layout.addWidget(self.list_widget_features_content)
+        self.list_widget_features_content.itemClicked.connect(self.function_handle_feature_list_change)
+
         # Section for Training Dataset List       
         self.function_create_label("Training Dataset List:", right_column_layout,label_style)
-        
         self.list_widget_train_downloaded_datasets = QListWidget()
         self.list_widget_train_downloaded_datasets.setStyleSheet(list_style)
         right_column_layout.addWidget(self.list_widget_train_downloaded_datasets)
         
+        # Section for Validation Dataset List      
+        self.function_create_label("Validation list:", right_column_layout,label_style)
+        self.list_widget_validation_downloaded_datasets= QListWidget()     
+        self.list_widget_validation_downloaded_datasets.setStyleSheet(list_style)   
+        right_column_layout.addWidget(self.list_widget_validation_downloaded_datasets)
+        
+        # Section for Validation list
+        self.function_create_label("Performance metrics List:", right_column_layout,label_style)
+        self.list_Widget_meta_model_datasets = QListWidget()
+        self.list_Widget_meta_model_datasets.setStyleSheet(list_style)
+        right_column_layout.addWidget(self.list_Widget_meta_model_datasets)
+                  
+        self.metadata_widget = QWidget()  
+        metadata_layout = QVBoxLayout()    
+        self.metadata_widget.setLayout(metadata_layout)
+        right_column_layout.addWidget(self.metadata_widget)
+               
+        layout.addLayout(right_column_layout)        
+           
+        return page_widget
+    
+    
+
+    def set_layout_to_train(self):
+        button_style = """
+            background-color: #416096;
+            color: #F9FFFF;
+            font-family: Arial;
+            font-size: 12;
+        """
+        label_style = """
+            background-color: #DEDEDC;
+            color: #000000;
+            font-family: Noto Sans Tangsa;
+            font-size: 12px;
+        """
+        
+        combobox_style = """
+            color: #F9FFFF;
+            font-size: 12px;
+            font-family: Arial;
+            background-color: #416096;
+            border: 1px solid #CCCCCC;
+        """     
+        lineedit_style = """
+            color: #000000;
+            font-size: 14px;
+            font-family: Arial;
+            background-color: #FFFFFF;
+            border: 1px solid #CCCCCC;
+            border-radius: 5px;
+            padding: 5px;
+            selection-background-color: #BFE6FF;
+            selection-color: #000000;
+        """
+
+        page_widget = QWidget()
+        layout = QHBoxLayout(page_widget)
+        
+        # Left column
+        left_column_layout = QVBoxLayout()
+
         # List of available training methods Q ComboBox
-        self.function_create_label("Select Training Module:", right_column_layout,label_style)
+        self.function_create_label("Select Training Module:", left_column_layout,label_style)
         self.training_methods = ["LGBMRegressor", "HistGradientBoostingRegressor"]  
         self.training_method_combo = QComboBox()
         self.training_method_combo.setStyleSheet(combobox_style)
         self.training_method_combo.addItems(self.training_methods)
-        right_column_layout.addWidget(self.training_method_combo)
+        left_column_layout.addWidget(self.training_method_combo)
 
         # Connect signal for combobox selection change
         self.training_method_combo.currentIndexChanged.connect(self.function_training_method_changed)
@@ -338,43 +364,68 @@ class Platform(QWidget):
         self.hyperparameters_layout_LGM = QVBoxLayout()
         widgets_LGM = []  # List to store widgets for LGBMRegressor parameters
         
+    
         self.function_create_label("Number of boosted trees to fit", self.hyperparameters_layout_LGM,label_style)
+        
+        # Create a QLineEdit with the custom validator
         self.n_estimators = QLineEdit()
+        validator = DelimitedValidator()  # Adjust delimiter and additional_delimiter if needed
+        self.n_estimators.setValidator(validator)
+
+
+        # self.n_estimators = QLineEdit()
         self.n_estimators.setStyleSheet(lineedit_style)
-        self.n_estimators.setPlaceholderText("2000")
+        self.n_estimators.setPlaceholderText("Please input Integer values like 2000 For multiple values, separate them with commas like 2000, 3000")
         self.hyperparameters_layout_LGM.addWidget(self.n_estimators)
         widgets_LGM.append(self.n_estimators)
         
+        
         self.function_create_label("Boosting learning rate", self.hyperparameters_layout_LGM,label_style)
+        
+        # Create a QLineEdit with the custom validator
         self.learning_rate = QLineEdit()
+        validator = DelimitedValidator()  # Adjust delimiter and additional_delimiter if needed
+        self.learning_rate.setValidator(validator)
+        
         self.learning_rate.setStyleSheet(lineedit_style)
-        self.learning_rate.setPlaceholderText("0.01")
+        self.learning_rate.setPlaceholderText("Please input float values like 0.01 For multiple values, separate them with commas like 0.01, 0.02")
         self.hyperparameters_layout_LGM.addWidget(self.learning_rate)
         widgets_LGM.append(self.learning_rate)
         
         self.function_create_label("Maximum tree depth for base learners", self.hyperparameters_layout_LGM,label_style)
+        
         self.max_depth = QLineEdit()
+        validator = DelimitedValidator()  # Adjust delimiter and additional_delimiter if needed
+        self.max_depth.setValidator(validator)
+        
         self.max_depth.setStyleSheet(lineedit_style)
-        self.max_depth.setPlaceholderText("5")
+        self.max_depth.setPlaceholderText("Please input Integer values like 5 For multiple values, separate them with commas like 5,6")
         self.hyperparameters_layout_LGM.addWidget(self.max_depth)
         widgets_LGM.append(self.max_depth)
         
         self.function_create_label("Maximum tree leaves for base learners", self.hyperparameters_layout_LGM,label_style)
+        
         self.num_leaves = QLineEdit()
+        validator = DelimitedValidator()  # Adjust delimiter and additional_delimiter if needed
+        self.num_leaves.setValidator(validator)
+        
         self.num_leaves.setStyleSheet(lineedit_style)
-        self.num_leaves.setPlaceholderText("5")
+        self.num_leaves.setPlaceholderText("Please input Integer values like 30 For multiple values, separate them with commas like 30,31")
         self.hyperparameters_layout_LGM.addWidget(self.num_leaves)
         widgets_LGM.append(self.num_leaves)
         
         self.function_create_label("Subsample ratio of columns when constructing each tree", self.hyperparameters_layout_LGM,label_style)
+        
         self.colsample_bytree = QLineEdit()
+        validator = DelimitedValidator()  # Adjust delimiter and additional_delimiter if needed
+        self.colsample_bytree.setValidator(validator)
+        
         self.colsample_bytree.setStyleSheet(lineedit_style)
-        self.colsample_bytree.setPlaceholderText("0.1")
+        self.colsample_bytree.setPlaceholderText("Please input float values like 0.1 For multiple values, separate them with commas like 0.1, 0.25")
         self.hyperparameters_layout_LGM.addWidget(self.colsample_bytree)
         widgets_LGM.append(self.colsample_bytree)
         
-        
-        right_column_layout.addLayout(self.hyperparameters_layout_LGM)
+        left_column_layout.addLayout(self.hyperparameters_layout_LGM)
 
         # Create layout for Scitkit hyperparameters
         self.hyperparameters_layout_HistGradientBoostingRegressor = QVBoxLayout()
@@ -382,37 +433,57 @@ class Platform(QWidget):
         widgets_HGBR =[]   # Dictionary to store widgets for Scikit regressor parameters
 
         self.function_create_label("Learning Rate", self.hyperparameters_layout_HistGradientBoostingRegressor,label_style)
+        
         self.learning_rate_sci = QLineEdit()
+        validator = DelimitedValidator()  # Adjust delimiter and additional_delimiter if needed
+        self.learning_rate_sci.setValidator(validator)
+        
         self.learning_rate_sci.setStyleSheet(lineedit_style)
-        self.learning_rate_sci.setPlaceholderText("0.1")
+        self.learning_rate_sci.setPlaceholderText("Please input float values like 0.01 For multiple values, separate them with commas like 0.01, 0.02")
         self.hyperparameters_layout_HistGradientBoostingRegressor.addWidget(self.learning_rate_sci)
         widgets_HGBR.append(self.learning_rate_sci)
         
         self.function_create_label("Max Number of Trees", self.hyperparameters_layout_HistGradientBoostingRegressor,label_style)
+        
         self.max_iter_sci = QLineEdit()
+        validator = DelimitedValidator()  # Adjust delimiter and additional_delimiter if needed
+        self.max_iter_sci.setValidator(validator)
+        
         self.max_iter_sci.setStyleSheet(lineedit_style)    
-        self.max_iter_sci.setPlaceholderText("100")
+        self.max_iter_sci.setPlaceholderText("Please input Integer values like 2000 For multiple values, separate them with commas like 2000, 30")
         self.hyperparameters_layout_HistGradientBoostingRegressor.addWidget(self.max_iter_sci)
         widgets_HGBR.append(self.max_iter_sci )        
         
         self.function_create_label("Max Num of leaves per Tree", self.hyperparameters_layout_HistGradientBoostingRegressor,label_style)
+        
         self.max_leaf_nodes_sci = QLineEdit()
+        validator = DelimitedValidator()  # Adjust delimiter and additional_delimiter if needed
+        self.max_leaf_nodes_sci.setValidator(validator)
+        
         self.max_leaf_nodes_sci.setStyleSheet(lineedit_style)  
-        self.max_leaf_nodes_sci.setPlaceholderText("31")
+        self.max_leaf_nodes_sci.setPlaceholderText("Please input Integer values like 31 For multiple values, separate them with commas like 30,31")
         self.hyperparameters_layout_HistGradientBoostingRegressor.addWidget(self.max_leaf_nodes_sci)
         widgets_HGBR.append(self.max_leaf_nodes_sci)    
         
         self.function_create_label("Max Depth of Tree", self.hyperparameters_layout_HistGradientBoostingRegressor,label_style)
+        
         self.max_depth_sci = QLineEdit()
+        validator = DelimitedValidator()  # Adjust delimiter and additional_delimiter if needed
+        self.max_depth_sci.setValidator(validator)
+        
         self.max_depth_sci.setStyleSheet(lineedit_style)  
-        self.max_depth_sci.setPlaceholderText("None")
+        self.max_depth_sci.setPlaceholderText("Please input Integer values like 5 For multiple values, separate them with commas like 5,6")
         self.hyperparameters_layout_HistGradientBoostingRegressor.addWidget(self.max_depth_sci)
         widgets_HGBR.append(self.max_depth_sci)    
         
         self.function_create_label("Proportion of random chosen features in each node split", self.hyperparameters_layout_HistGradientBoostingRegressor,label_style)
+        
         self.max_features_sci = QLineEdit()
+        validator = DelimitedValidator()  # Adjust delimiter and additional_delimiter if needed
+        self.max_features_sci.setValidator(validator)
+        
         self.max_features_sci.setStyleSheet(lineedit_style)  
-        self.max_features_sci.setPlaceholderText("0.1")
+        self.max_features_sci.setPlaceholderText("Please input float values like 0.1 For multiple values, separate them with commas like 0.1, 0.2")
         self.hyperparameters_layout_HistGradientBoostingRegressor.addWidget(self.max_features_sci)
         widgets_HGBR.append(self.max_features_sci)    
         
@@ -422,120 +493,49 @@ class Platform(QWidget):
             if widget:
                 widget.hide()
         
-        right_column_layout.addLayout(self.hyperparameters_layout_HistGradientBoostingRegressor)
+        left_column_layout.addLayout(self.hyperparameters_layout_HistGradientBoostingRegressor)
 
         # Create download button
-        self.button_download_data_set_selected = self.function_create_button("Train", right_column_layout, self.function_Button_Train_Model, button_style)
-        self.button_download_data_set_selected = self.function_create_button("Train Multi Models", right_column_layout, self.function_Multiple_Train_Buttons, button_style)
+        self.button_download_data_set_selected = self.function_create_button("Train Multi Models", left_column_layout, self.function_Multiple_Train_Buttons, button_style) 
+        
+        left_column_layout.setAlignment(Qt.AlignTop) 
+        layout.addLayout(left_column_layout)  
+        
+        # Right column
+        right_column_layout = QVBoxLayout()
 
-        
-        
-        
-        self.function_create_label("First 50 Rows Training", right_column_layout,label_style)
-        self.table_widget_train_dataset = QTableWidget()
-        self.table_widget_train_dataset .setStyleSheet(Table_style)
-        right_column_layout.addWidget(self.table_widget_train_dataset)
-                
-        
+        # Create QLabel for displaying the image
+        image_label = QLabel()
+        pixmap = QPixmap("C:/Users/aat2g/OneDrive/Documents/13. Personal Project/7. NumerAi Test/Numerai-modelling-app/learning.jpg")
+
+        # Scale pixmap to fit the size of the QLabel
+        image_label.setPixmap(pixmap.scaled(image_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+        image_label.setAlignment(Qt.AlignCenter)
+
+        # Set maximum size policy for the image label (occupies maximum 40% of space)
+        image_label.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Maximum)
+        image_label.setMaximumSize(800, 800)  # Example size, adjust as needed
+
+        # Add the image QLabel to the right layout
+        right_column_layout.addWidget(image_label, alignment=Qt.AlignCenter)
+
         layout.addLayout(right_column_layout)
-            
-        return page_widget
-    
-    
-
-    def set_layout_to_validate(self):
-        
-        page_widget = QWidget()
-        layout = QVBoxLayout(page_widget)
-
-        button_style = """
-                background-color: #416096;
-                color: #F9FFFF;
-                font-family: Arial;
-                font-size: 12;
-            """
-        
-        label_style = """
-            background-color: #FCFCFC;
-            color: #000000;
-            font-family: Noto Sans Tangsa;
-            font-size: 12px;
-        """
-        
-        list_style = """
-            background-color: #FCFCFC;
-            color: #000000;
-            border: 1px solid #CCCCCC;
-        """
-               
-        Table_style = """
-        color: #000000;
-        font-size: 9px;
-        font-family: Arial;
-        background-color: #FFFFFF;
-        border: 1px solid #CCCCCC;
-        border-radius: 2px;
-        padding: 2px;
-        selection-background-color: #BFE6FF;
-        selection-color: #000000;
-        """
-        # Section for Validation Dataset List      
-        self.function_create_label("Validation list:", layout,label_style)
-        
-        self.list_widget_validation_downloaded_datasets= QListWidget()     
-        self.list_widget_validation_downloaded_datasets.setStyleSheet(list_style)   
-        layout.addWidget(self.list_widget_validation_downloaded_datasets)
-        
-        # Create Validate button
-        self.button_validate_data_Set_selected = self.function_create_button("Validate", layout, self.function_Button_Validate_Model,button_style)
-      
-        self.function_create_label("First 50 Rows Validation Table", layout,label_style)
-        
-        self.table_widget_validation_dataset = QTableWidget()
-        self.table_widget_validation_dataset.setStyleSheet(Table_style)
-        layout.addWidget(self.table_widget_validation_dataset)
-        
-        self.function_create_label("Validation Results Table", layout,label_style)
-        
-        self.table_widget_validation_results = QTableWidget()
-        self.table_widget_validation_results.setStyleSheet(Table_style)
-        layout.addWidget(self.table_widget_validation_results)
         
         return page_widget
 
 
     def set_layout_to_peformance(self):
-        button_style = """
-                background-color: #416096;
-                color: #F9FFFF;
-                font-family: Arial;
-                font-size: 12;
-            """
-        
+            
         label_style = """
-            background-color: #FCFCFC;
+            background-color: #DEDEDC;
             color: #000000;
             font-family: Noto Sans Tangsa;
             font-size: 12px;
         """
-        
-        list_style = """
-            background-color: #FCFCFC;
-            color: #000000;
-            border: 1px solid #CCCCCC;
-        """
-           
-        combobox_style = """
-            color: #F9FFFF;
-            font-size: 12px;
-            font-family: Arial;
-            background-color: #416096;
-            border: 1px solid #CCCCCC;
-        """     
-
         Table_style = """
         color: #000000;
-        font-size: 9px;
+        font-size: 10px;
         font-family: Arial;
         background-color: #FFFFFF;
         border: 1px solid #CCCCCC;
@@ -543,77 +543,50 @@ class Platform(QWidget):
         padding: 2px;
         selection-background-color: #BFE6FF;
         selection-color: #000000;
-        """        
-        
+        """    
+           
         page_widget = QWidget()
-        layout = QVBoxLayout(page_widget)
+        layout = QHBoxLayout(page_widget)
 
+        # Left column
+        left_column_layout = QVBoxLayout()
         
-        # Section for Validation list
-        self.function_create_label("Performance metrics List:", layout,label_style)
+        self.function_create_label("First 50 Rows Training", left_column_layout,label_style)
+        self.table_widget_train_dataset = QTableWidget()
+        self.table_widget_train_dataset .setStyleSheet(Table_style)
+        left_column_layout.addWidget(self.table_widget_train_dataset)
         
-        self.list_Widget_meta_model_datasets = QListWidget()
-        self.list_Widget_meta_model_datasets.setStyleSheet(list_style)
-        layout.addWidget(self.list_Widget_meta_model_datasets)
+        self.function_create_label("First 50 Rows Validation Table", left_column_layout,label_style)
+        self.table_widget_validation_dataset = QTableWidget()
+        self.table_widget_validation_dataset.setStyleSheet(Table_style)
+        left_column_layout.addWidget(self.table_widget_validation_dataset)
         
-        # Create Peformance Evaluation button
-        self.button_performance_evaluation_data_set_selected = self.function_create_button("Performance Evaluation", layout, self.function_Button_Evaluate_Peforance_Model,button_style)
+        layout.addLayout(left_column_layout)
+        
+        # Right column
+        right_column_layout = QVBoxLayout()   
+        
+        self.function_create_label("Validation Results Table", right_column_layout,label_style)
+        self.table_widget_validation_results = QTableWidget()
+        self.table_widget_validation_results.setStyleSheet(Table_style)
+        right_column_layout.addWidget(self.table_widget_validation_results)
         
         #Table for the meta model perforance metricx
-        self.function_create_label("Meta Model Performance Table", layout,label_style)
-        
+        self.function_create_label("Meta Model Performance Table", right_column_layout,label_style)
         self.table_widget_metamodel_performance_file = QTableWidget()
         self.table_widget_metamodel_performance_file.setStyleSheet(Table_style)
-        layout.addWidget(self.table_widget_metamodel_performance_file)
+        right_column_layout.addWidget(self.table_widget_metamodel_performance_file)
         
-        self.function_create_label("Validation Results Table", layout,label_style)
-        
-        self.table_widget_performance_results = QTableWidget()
-        self.table_widget_performance_results.setStyleSheet(Table_style)
-        layout.addWidget(self.table_widget_performance_results)
-          
-        # Section for Live Prediction List
-        self.function_create_label("Live Prediction List:", layout,label_style)
-        
-        self.list_Widget_Live_Prediction_Datasets = QListWidget()
-        self.list_Widget_Live_Prediction_Datasets.setStyleSheet(list_style)
-        layout.addWidget(self.list_Widget_Live_Prediction_Datasets)        
-        
-        # Create Peformance Evaluation button
-        self.button_Live_Prediction_Data_Set_Selected = self.function_create_button("Live Prediction:", layout, self.function_Button_Live_predictions_Model,button_style)      
+        layout.addLayout(right_column_layout)       
                 
         return page_widget
     
     
     
     def set_layout_to_Automate(self):
-        button_style = """
-                background-color: #416096;
-                color: #F9FFFF;
-                font-family: Arial;
-                font-size: 12;
-            """
-        label_style = """
-            background-color: #FCFCFC;
-            color: #000000;
-            font-family: Noto Sans Tangsa;
-            font-size: 12px;
-        """
-        list_style = """
-            background-color: #FCFCFC;
-            color: #000000;
-            border: 1px solid #CCCCCC;
-        """
-        combobox_style = """
-            color: #F9FFFF;
-            font-size: 12px;
-            font-family: Arial;
-            background-color: #416096;
-            border: 1px solid #CCCCCC;
-        """     
         Table_style = """
         color: #000000;
-        font-size: 9px;
+        font-size: 10px;
         font-family: Arial;
         background-color: #FFFFFF;
         border: 1px solid #CCCCCC;
@@ -622,22 +595,36 @@ class Platform(QWidget):
         selection-background-color: #BFE6FF;
         selection-color: #000000;
         """                
-        lineedit_style = """
-        color: #000000;
-        font-size: 14px;
-        font-family: Arial;
-        background-color: #FFFFFF;
-        border: 1px solid #CCCCCC;
-        border-radius: 5px;
-        padding: 5px;
-        selection-background-color: #BFE6FF;
-        selection-color: #000000;
-        """
+ 
         page_widget = QWidget()
         layout = QVBoxLayout(page_widget)
         self.table_widget_multi_results = QTableWidget()
         self.table_widget_multi_results.setStyleSheet(Table_style)
         layout.addWidget(self.table_widget_multi_results)
+        
+
+        # Create a horizontal layout for the graphs
+        graph_layout = QHBoxLayout()
+        
+        # Create the first graph widget and its toolbar
+        self.graph_widget_1 = FigureCanvas(Figure(figsize=(7, 5)))  # Set initial size of the figure
+        self.graph_widget_1_toolbar = NavigationToolbar(self.graph_widget_1, self)
+        self.graph_widget_1.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        graph_layout.addWidget(self.graph_widget_1)
+        graph_layout.addWidget(self.graph_widget_1_toolbar)
+
+        # Create the second graph widget and its toolbar
+        self.graph_widget_2 = FigureCanvas(Figure(figsize=(7, 5)))  # Set initial size of the figure
+        self.graph_widget_2_toolbar = NavigationToolbar(self.graph_widget_2, self)
+        self.graph_widget_2.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        graph_layout.addWidget(self.graph_widget_2)
+        graph_layout.addWidget(self.graph_widget_2_toolbar)
+        
+        # Add the graph layout to the main layout
+        layout.addLayout(graph_layout)
+
+        # Connect table selection signal to the update_graphs function
+        self.table_widget_multi_results.itemSelectionChanged.connect(self.function_update_graphs)
         
         return page_widget
   
@@ -649,22 +636,91 @@ class Platform(QWidget):
         sender_name = sender_button.text()
         
         # Determine which layout widgets to show based on the clicked button's name
-        if sender_name == "Train":
-            self.button_label.setText(sender_name)
-            self.body_widget.setCurrentIndex(0)
+        if sender_name == "Datasets":
+            if self.body_widget.currentIndex() != 0:  # Check if current index is not already 0
+                self.button_label.setText(sender_name)
+                self.body_widget.setCurrentIndex(0)
                     
-        elif sender_name == "Validate":
-            self.button_label.setText(sender_name)
-            self.body_widget.setCurrentIndex(1)
+        elif sender_name == "Train":
+            # Check if current index is not already 1
+            if self.body_widget.currentIndex() != 1:
+                # Check if any of the required lists are empty or no items are selected
+                if (not self.list_Widget_Features_Downloaded_Datasets.selectedItems() or
+                    not self.list_widget_validation_downloaded_datasets.selectedItems() or
+                    not self.list_widget_train_downloaded_datasets.selectedItems() or
+                    not self.list_Widget_meta_model_datasets.selectedItems() or
+                    not self.list_widget_features_content.selectedItems()):
+                    
+                    # Inform the user to download and select items from the missing lists
+                    missing_lists = []
+                    if not self.list_Widget_Features_Downloaded_Datasets.selectedItems():
+                        missing_lists.append("Features List")
+                    if not self.list_widget_validation_downloaded_datasets.selectedItems():
+                        missing_lists.append("Validation Dataset List")
+                    if not self.list_widget_train_downloaded_datasets.selectedItems():
+                        missing_lists.append("Training Dataset List")
+                    if not self.list_Widget_meta_model_datasets.selectedItems():
+                        missing_lists.append("Performance Metrics List")
+                    if not self.list_widget_features_content.selectedItems():
+                        missing_lists.append("Features List Contents")
+                        
+                    QMessageBox.warning(self, "Missing Selection",
+                                        f"Please download and select items from the following lists: {', '.join(missing_lists)}")
+                else:
+                    self.button_label.setText(sender_name)
+                    self.body_widget.setCurrentIndex(1)
             
-        elif sender_name == "Peformance":
+        elif sender_name == "Tables":
             self.button_label.setText(sender_name)
-            self.body_widget.setCurrentIndex(2)
+            self.body_widget.setCurrentIndex(3)
 
         elif sender_name == "Muti-Automate":
             self.button_label.setText(sender_name)
-            self.body_widget.setCurrentIndex(3)
+            self.body_widget.setCurrentIndex(2)
+
+
+    def function_update_graphs(self):
+        # Check if self.trained_models is not empty
+        if self.trained_models:
+            # Get the selected row indexes
+            selected_indexes = self.table_widget_multi_results.selectedIndexes()
+            if selected_indexes:
+                selected_row = selected_indexes[0].row()  # Assuming single selection
+                (results_df, model, validation, Performance_validation, per_era_corr, per_era_mmc) = self.trained_models[selected_row]
+
+                # Clear existing plots from the Figure objects associated with graph_widget_1 and graph_widget_2
+                self.graph_widget_1.figure.clear()
+                self.graph_widget_2.figure.clear()
+
+                # Plot cumulative validation CORR
+                ax1 = self.graph_widget_1.figure.add_subplot(111)
+                per_era_corr.cumsum().plot(
+                    ax=ax1,
+                    title="Cumulative Validation CORR",
+                    kind="line",
+                    legend=False
+                )
+                # Use subplots_adjust to manually set margins
+                self.graph_widget_1.figure.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.1)
+
+                # Plot cumulative validation MMC
+                ax2 = self.graph_widget_2.figure.add_subplot(111)
+                per_era_mmc.cumsum().plot(
+                    ax=ax2,
+                    title="Cumulative Validation MMC",
+                    kind="line",
+                    legend=False
+                )
+                # Use subplots_adjust to manually set margins
+                self.graph_widget_2.figure.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.1)
+
+                # Redraw the graph widgets to reflect the changes
+                self.graph_widget_1.draw()
+                self.graph_widget_2.draw()
                 
+                # Populate table widget
+                self.setup_validation_results_table(validation)
+                        
     def function_create_label(self, text: str, parent_layout, style = None)-> None:
         label = QLabel(text)
         label.setFixedHeight(20)
@@ -684,16 +740,14 @@ class Platform(QWidget):
         parent_layout.addWidget(button)
          
     def function_handle_feature_list_change(self, selected_item):
-        
+
         if selected_item:
             self.selected_feature_set = selected_item.text()
-
-            # Select Feature File to get the data of the feature set selected
             self.selected_feature_file = self.list_Widget_Features_Downloaded_Datasets.currentItem().text()
 
             file_extension_feature_file = os.path.splitext(self.selected_feature_file)[1].lower()
             full_file_path_feature_file = os.path.join(self.dynamic_folder_path, self.selected_feature_file)
-            
+
             self.num_of_features = 0  # Default value in case of an error
 
             try:
@@ -703,36 +757,40 @@ class Platform(QWidget):
                         selected_feature_sets = feature_metadata["feature_sets"][self.selected_feature_set]
                         self.num_of_features = len(selected_feature_sets)
             except Exception as e:
-                return f"Error loading dataset: {e}"
-            
+                print(f"Error loading dataset: {e}")
+        else:
+            self.selected_feature_set = None
+            self.selected_feature_file = None
+            self.num_of_features = 0
 
         # Clear the existing layout in the metadata widget
         layout = self.metadata_widget.layout()
         if layout:
             for i in reversed(range(layout.count())):
                 layout.itemAt(i).widget().setParent(None)
-        
+
         label_style = """
             background-color: #DEDEDC;
             color: #000000;
             font-family: Arial;
             font-size: 12px;
         """
-        
+
         if self.selected_feature_file:
-            self.function_create_label(f"Feature List File: {self.selected_feature_file}",layout,label_style)
+            self.function_create_label(f"Feature List File: {self.selected_feature_file}", layout, label_style)
         else:
-            QLabel("Feature List File: N/A")
+            self.function_create_label("Feature List File: N/A", layout, label_style)
 
         if self.selected_feature_set:
-            self.function_create_label(f"Feature List Selected: {self.selected_feature_set}",layout,label_style)
+            self.function_create_label(f"Feature List Selected: {self.selected_feature_set}", layout, label_style)
         else:
-            QLabel("Feature List Selected: N/A")
-        
+            self.function_create_label("Feature List Selected: N/A", layout, label_style)
+
         if self.num_of_features:
-            self.function_create_label(f"Number of Features: {self.num_of_features}",layout,label_style)
+            self.function_create_label(f"Number of Features: {self.num_of_features}", layout, label_style)
         else:
-            QLabel("Number of Features: N/A")
+            self.function_create_label("Number of Features: N/A", layout, label_style)
+            
                 
     def get_default_folder_path(self):
         system = platform.system()
@@ -824,12 +882,10 @@ class Platform(QWidget):
                 existing_items_train = {self.list_widget_train_downloaded_datasets.item(i).text()
                                         for i in range(self.list_widget_train_downloaded_datasets.count())}
     
-
             if hasattr(self, 'list_widget_validation_downloaded_datasets'):
                 existing_items_validation = {self.list_widget_validation_downloaded_datasets.item(i).text()
                                             for i in range(self.list_widget_validation_downloaded_datasets.count())}
         
-
             if hasattr(self, 'list_Widget_Features_Downloaded_Datasets'):
                 existing_items_Features = {self.list_Widget_Features_Downloaded_Datasets.item(i).text()
                                         for i in range(self.list_Widget_Features_Downloaded_Datasets.count())}
@@ -838,16 +894,10 @@ class Platform(QWidget):
                 existing_items_downloaded = {self.list_Widget_Availabile_Downloaded_Datasets.item(i).text()
                                             for i in range(self.list_Widget_Availabile_Downloaded_Datasets.count())}
         
-
             if hasattr(self, 'list_Widget_meta_model_datasets'):
                 existing_Meta_Model_downloaded = {self.list_Widget_meta_model_datasets.item(i).text()
                                                 for i in range(self.list_Widget_meta_model_datasets.count())}
-        
-
-            if hasattr(self, 'list_Widget_Live_Prediction_Datasets'):
-                existing_Live_Prediction_downloaded = {self.list_Widget_Live_Prediction_Datasets.item(i).text()
-                                                    for i in range(self.list_Widget_Live_Prediction_Datasets.count())}
-                  
+                        
         except AttributeError as e:
             print("List widgets are not yet defined. Skipping function execution.")
             return
@@ -868,9 +918,6 @@ class Platform(QWidget):
 
             if "meta_model" in item_lower and item not in existing_Meta_Model_downloaded:
                 self.list_Widget_meta_model_datasets.addItem(item)
-
-            if "live" in item_lower and item not in existing_Live_Prediction_downloaded:
-                self.list_Widget_Live_Prediction_Datasets.addItem(item)
 
         # Dataset is triggered when a user clicks download button. 
         # Extract the text from the dataset object selected for download.
@@ -893,32 +940,41 @@ class Platform(QWidget):
             if "meta_model" in dataset.lower() and item not in existing_Meta_Model_downloaded:
                 self.list_Widget_meta_model_datasets.addItem(dataset)
                 
-            if "live" in dataset.lower() and item not in existing_Live_Prediction_downloaded:
-                self.list_Widget_Live_Prediction_Datasets.addItem(dataset)
                 
     def function_update_downloaded_datasets_list(self,folder_path) -> None:
         """
         Updates the list of downloaded datasets.
         """
-        self.list_Widget_Availabile_Downloaded_Datasets.clear()
+        # Clear the lists if they exist
+        if hasattr(self, 'list_Widget_Availabile_Downloaded_Datasets'):
+            self.list_Widget_Availabile_Downloaded_Datasets.clear()
+        if hasattr(self, 'list_Widget_Features_Downloaded_Datasets'):
+            self.list_Widget_Features_Downloaded_Datasets.clear()
+            
+        if hasattr(self, 'list_widget_validation_downloaded_datasets'):
+            self.list_widget_validation_downloaded_datasets.clear()
+        if hasattr(self, 'list_widget_train_downloaded_datasets'):
+            self.list_widget_train_downloaded_datasets.clear()
+        if hasattr(self, 'list_Widget_meta_model_datasets'):
+            self.list_Widget_meta_model_datasets.clear()
+        if hasattr(self, 'list_widget_features_content'):
+            self.list_widget_features_content.clear()        
+            self.function_handle_feature_list_change(None)
+
         try:
-        # Add downloaded datasets to the table
             for root, dirs, files in os.walk(folder_path):
                 for dir in dirs:
-                    # Get the full directory path
                     dir_path = os.path.join(root, dir)
-                    # Iterate over files in the directory
                     for file in os.listdir(dir_path):
-                        # Check if file has one of the desired extensions
                         if file.endswith(('.csv', '.parquet', '.json', '.xlsx', '.db', '.sqlite', '.sqlite3')):
-                            # Get the full file path
-                            file_path = os.path.join(dir, file)
+                            file_path = os.path.join(dir_path, file)
                             file_path = file_path.replace('\\', '/')
-                            # Add dataset to the list if it doesn't already exist
-                            self.list_Widget_Availabile_Downloaded_Datasets.addItem(file_path)
+                            relative_path = os.path.relpath(file_path, folder_path).replace('\\', '/')
+                            self.list_Widget_Availabile_Downloaded_Datasets.addItem(relative_path)
             self.function_update_downloaded_datasets_table()
         except Exception as e:
             print(f"Error updating downloaded datasets list: {e}")
+
                                       
     def function_button_download_selected_dataset(self)->None:
         # Initialize NumerAPI - the official Python API client for Numerai
@@ -970,7 +1026,6 @@ class Platform(QWidget):
         table_widget.setColumnCount(len(df_head.columns) + 1)
         headers = ["ID"] + list(df_head.columns)
         table_widget.setHorizontalHeaderLabels(headers)
-        
             
         for row_num, (index, row) in enumerate(df_head.iterrows()):
             table_widget.insertRow(row_num)
@@ -986,229 +1041,212 @@ class Platform(QWidget):
         # Print the number of rows and columns
         print(f"Number of Rows: {num_rows}")
         print(f"Number of Columns: {num_cols}")
-        
            
     def clear_table_widget(self, table_widget)->None:
         table_widget.clear()
         table_widget.setRowCount(0)
-        table_widget.setColumnCount(0)
-    
-    
-    def function_Button_Train_Model(self) -> None:
+        table_widget.setColumnCount(0)    
+             
+    def function_Multiple_Train_Buttons(self) -> None: 
+        # Retrieve selected feature sets
+        selected_feature_sets = self.get_selected_feature_sets()
+        if selected_feature_sets is None:
+            return
         
-        # Clear trained file and model global parameters
-        self.read_parquet_train_file = None
-        self.trained_model = None
-        self.selected_feature_sets_all_features = None
+        # Load training data
+        train = self.load_training_data(selected_feature_sets)
+        if train is None:
+            return
+        
+        # Load performance metric file
+        validation_file_path = self.verify_load_validation_file_selected()
+        if validation_file_path is None:
+            return
+        
+        # Load performance metric file
+        Performance_validation_file_path = self.verify_load_performance_metric_file_selected()
+        if Performance_validation_file_path is None:
+            return
+
         # Verify modelling method algorithm selected by user 
         selected_method = self.training_method_combo.currentText()
-        
-        if selected_method == "HistGradientBoostingRegressor":
-            # Get hyperparameters values from GUI inputs
-            learning_rate_value = self.learning_rate_sci.text()
-            n_estimators_value=self.max_iter_sci.text()
-            num_leaves_value=self.max_leaf_nodes_sci.text()
-            max_depth_value= self.max_depth_sci.text()
-            colsample_bytree_value = self.max_features_sci.text()
- 
-            # Validate hyperparameters
-            if not all([n_estimators_value, learning_rate_value, max_depth_value, num_leaves_value, colsample_bytree_value]):
-                QMessageBox.warning(self, "Input Required", "Please fill in all hyperparameters.")
-                return None
-            
-            if not self.selected_feature_set or not self.selected_feature_file:
-                QMessageBox.warning(self, "Selection Required", "Please select a Feature Set and a Feature File to proceed.")
-                return
-        
-            # Convert hyperparameters to appropriate types
-            try:
-                hyperparameters = {
-                    'max_iter': int(n_estimators_value),
-                    'learning_rate': float(learning_rate_value),
-                    'max_depth': int(max_depth_value),
-                    'max_leaf_nodes': int(eval(num_leaves_value)),
-                    'max_features': float(colsample_bytree_value)
-                }
-                
-            except ValueError:
-                QMessageBox.warning(self, "Invalid Input", "Please enter valid hyperparameter values.")
-                return None
-    
-            file_extension_feature_file = os.path.splitext(self.selected_feature_file)[1].lower()
-            full_file_path_feature_file = os.path.join(self.dynamic_folder_path, self.selected_feature_file)
-
-            try:
-                if file_extension_feature_file == ".json":
-                    with open(full_file_path_feature_file, 'r') as file:
-                        feature_metadata = json.load(file)
-                        self.selected_feature_sets_all_features = feature_metadata["feature_sets"][self.selected_feature_set]
-            except Exception as e:
-                QMessageBox.warning(self, "Error", f"Error loading dataset: {e}")
-                return
-
-            # Define feature set and download training data
-            selected_training_file =  self.list_widget_train_downloaded_datasets.currentItem()
-            if not selected_training_file:  # No item is selected
-                QMessageBox.warning(self, "Selection Required", "Please select a training int 8 file to proceed.")
-                return
-            
-            selected_training_file = selected_training_file.text()
-            file_extension_training_file = os.path.splitext(selected_training_file)[1].lower()
-            
-            try:
-                if file_extension_training_file == ".parquet":
-                    self.read_parquet_train_file= pd.read_parquet(selected_training_file, columns=["era"] + self.selected_feature_sets_all_features +["target"])
-                    self.fuction_parquet_data_into_table(self.read_parquet_train_file,self.table_widget_train_dataset)
-                else:
-                    raise ValueError("Unsupported file format.")
-            except Exception as e:
-                QMessageBox.warning(self, "Error", f"Error loading dataset: {e}")
-                return
-            
-            # Train the model using the provided features and target data
-            self.trained_model = HistGradientBoostingRegressor(**hyperparameters)
-            self.trained_model.fit(self.read_parquet_train_file[self.selected_feature_sets_all_features],self.read_parquet_train_file["target"])
-            
-            print("Model Training Ended")
-            
-            
-        elif selected_method == "LGBMRegressor":
-            # Get hyperparameters values from GUI inputs
-            n_estimators_value = self.n_estimators.text()
-            learning_rate_value= self.learning_rate.text()
-            max_depth_value= self.max_depth.text()
-            num_leaves_value= self.num_leaves.text()
-            colsample_bytree_value =self.colsample_bytree.text()
-            
-            # Validate hyperparameters
-            if not all([n_estimators_value, learning_rate_value, max_depth_value, num_leaves_value, colsample_bytree_value]):
-                QMessageBox.warning(self, "Input Required", "Please fill in all hyperparameters.")
-                return None
-            
-            if not self.selected_feature_set or not self.selected_feature_file:
-                QMessageBox.warning(self, "Selection Required", "Please select a Feature Set and a Feature File to proceed.")
-                return
-          
-            # Convert hyperparameters to appropriate types
-            try:
-                hyperparameters = {
-                    'n_estimators': int(n_estimators_value),
-                    'learning_rate': float(learning_rate_value),
-                    'max_depth': int(max_depth_value),
-                    'num_leaves': int(eval(num_leaves_value)),
-                    'colsample_bytree': float(colsample_bytree_value)
-                }
-
-            except ValueError:
-                QMessageBox.warning(self, "Invalid Input", "Please enter valid hyperparameter values.")
-                return None
-    
-            file_extension_feature_file = os.path.splitext(self.selected_feature_file)[1].lower()
-            full_file_path_feature_file = os.path.join(self.dynamic_folder_path, self.selected_feature_file)
-
-            try:
-                if file_extension_feature_file == ".json":
-                    with open(full_file_path_feature_file, 'r') as file:
-                        feature_metadata = json.load(file)
-                        self.selected_feature_sets_all_features = feature_metadata["feature_sets"][self.selected_feature_set]
-            except Exception as e:
-                QMessageBox.warning(self, "Error", f"Error loading dataset: {e}")
-                return
-
-            # Define feature set and download training data
-            selected_training_file =  self.list_widget_train_downloaded_datasets.currentItem()
-            
-            if not selected_training_file:  # No item is selected
-                QMessageBox.warning(self, "Selection Required", "Please select a training int 8 file to proceed.")
-                return
-            
-            selected_training_file = selected_training_file.text()
-            file_extension_training_file = os.path.splitext(selected_training_file)[1].lower()
-            full_file_path_training_file = os.path.join(self.dynamic_folder_path, selected_training_file)
-
-            try:
-                if file_extension_training_file == ".parquet":
-                    with open(full_file_path_training_file, 'r') as file:
-                        self.read_parquet_train_file = pd.read_parquet(full_file_path_training_file, columns=["era"] + self.selected_feature_sets_all_features +["target"])
-                        self.fuction_parquet_data_into_table(self.read_parquet_train_file,self.table_widget_train_dataset)
-                else:
-                    raise ValueError("Unsupported file format.")
-            except Exception as e:
-                QMessageBox.warning(self, "Error", f"Error loading dataset: {e}")
-                return
-            # Train the model using the provided features and target data
-            self.trained_model = LGBMRegressor(**hyperparameters)
-            self.trained_model.fit(self.read_parquet_train_file[self.selected_feature_sets_all_features],self.read_parquet_train_file["target"])
-            print("Model Training for LGB Regressor Ended")
-
-
-
-
-    def function_Button_Validate_Model(self) -> None:
-        
-        """
-        Validates the trained model using the validation dataset.
-        """
-        if not self.selected_feature_set:  # No item is selected
-            QMessageBox.warning(self, "Selection Required", "Please select an Feature Set to proceed.")
-            return       
-        
-        if not self.selected_feature_file:  # No item is selected
-            QMessageBox.warning(self, "Selection Required", "Please select a featue file to proceed.")
+        if selected_method == "LGBMRegressor":
+            hyperparameters_grid = self.create_lgbm_hyperparameter_grid()
+        elif selected_method == "HistGradientBoostingRegressor":
+            hyperparameters_grid = self.create_HistGradientBoostingRegressor_hyperparameter_grid()
+        else:
+            QMessageBox.warning(self, "Invalid Input", "Please select a valid training method.")
             return
         
-        file_extension_feature_file = os.path.splitext(self.selected_feature_file)[1].lower()
-        full_file_path_feature_file = os.path.join(self.dynamic_folder_path, self.selected_feature_file)
+        trained_models_table_this_round_only = {} #this copies trained  model for the table 
+        
+        try:
+            if hyperparameters_grid:  # Check if hyperparameters_grid is not None or empty
+                for i in range(len(next(iter(hyperparameters_grid.values())))):
+                    try:  
+                        hyperparameters_dict = {key: hyperparameters_grid[key][i] for key in hyperparameters_grid}
+
+                        model = self.train_lgb_model_with_hyperparameters(hyperparameters_dict, selected_feature_sets, train)
+                    except Exception as e:
+                        print(f"Error training model with hyperparameters {hyperparameters_dict}: {e}")
+                        continue    
+                        
+                    try:                    
+                        # Load validation data
+                        validation = self.load_validation_data(selected_feature_sets,validation_file_path)
+                        if validation is None:
+                            return
+
+                        validation = validation[validation["data_type"] == "validation"]
+                        del validation["data_type"]
+
+                        # Eras are 1 week apart, but targets look 20 days (or 4 weeks/eras) into the future,
+                        # so we need to "embargo" the first 4 eras following our last train era to avoid "data leakage"
+                        last_train_era = int(train["era"].unique()[-1])
+                        eras_to_embargo = [str(era).zfill(4) for era in [last_train_era + i for i in range(4)]]
+                        validation = validation[~validation["era"].isin(eras_to_embargo)]
+                        
+                        self.fuction_parquet_data_into_table(validation,self.table_widget_validation_dataset)
+
+                        # Generate predictions against the out-of-sample validation features
+                        # This will take a few minutes
+                        validation["prediction"] = model.predict(validation[selected_feature_sets])
+                        print(validation[["era", "prediction", "target"]])
+                    
+                    except Exception as e:
+                        print(f"Error during validation or prediction: {e}")
+                        continue
+            
+                    try:
+                        # Load performance metric file
+                        Performance_validation = self.load_performance_metric_file(validation,Performance_validation_file_path)
+                        if Performance_validation is None:
+                            return
+                        
+                        # Compute the per-era corr between our predictions and the target values
+                        per_era_corr = Performance_validation.groupby("era").apply(
+                            lambda x: numerai_corr(x[["prediction"]].dropna(), x["target"].dropna())
+                        )
+
+                        per_era_mmc = Performance_validation.dropna().groupby("era").apply(
+                            lambda x: correlation_contribution(x[["prediction"]], x["meta_model"], x["target"])
+                        )
+                        
+                    except Exception as e:
+                        print(f"Error computing performance metrics: {e}")
+                        continue
+                    
+                    try:
+                        # Compute performance metrics
+                        corr_mean = per_era_corr.mean()
+                        corr_std = per_era_corr.std(ddof=0)
+                        corr_sharpe = corr_mean / corr_std
+                        corr_max_drawdown = (per_era_corr.cumsum().expanding(min_periods=1).max() - per_era_corr.cumsum()).max()
+
+                        mmc_mean = per_era_mmc.mean()
+                        mmc_std = per_era_mmc.std(ddof=0)
+                        mmc_sharpe = mmc_mean / mmc_std
+                        mmc_max_drawdown = (per_era_mmc.cumsum().expanding(min_periods=1).max() - per_era_mmc.cumsum()).max()
+
+                        # Create a DataFrame to hold the results
+                        results_df = pd.DataFrame({
+                            'n_estimators': [hyperparameters_dict.get('n_estimators')],
+                            'learning_rate': [hyperparameters_dict.get('learning_rate')],
+                            'max_depth': [hyperparameters_dict.get('max_depth')],
+                            'num_leaves': [hyperparameters_dict.get('num_leaves')],
+                            'colsample_bytree': [hyperparameters_dict.get('colsample_bytree')],
+                            'max_iter': [hyperparameters_dict.get('max_iter')],
+                            'max_leaf_nodes': [hyperparameters_dict.get('max_leaf_nodes')],
+                            'max_features': [hyperparameters_dict.get('max_features')],
+                            "corr_mean": [corr_mean],
+                            "mmc_mean": [mmc_mean],
+                            "corr_std": [corr_std],
+                            "mmc_std": [mmc_std],
+                            "corr_sharpe": [corr_sharpe],
+                            "mmc_sharpe": [mmc_sharpe],
+                            "corr_max_drawdown": [corr_max_drawdown],
+                            "mmc_max_drawdown": [mmc_max_drawdown]
+                        })
+
+                        if model is not None:
+                            # Determine the next number for self.trained_models
+                            # If self.trained_models is empty, max(..., default=-1) returns -1, so next_number becomes 0
+                            next_number = max(self.trained_models.keys(), default=-1) + 1
+                            
+                            # Determine the next number for trained_models_table_this_round_only
+                            # If trained_models_table_this_round_only is empty, max(..., default=-1) returns -1, so next_number_this_round becomes 0
+                            next_number_this_round = max(trained_models_table_this_round_only.keys(), default=-1) + 1
+                            
+                            # Store the hyperparameters dictionary and model
+                            model_data = (results_df, model, validation, Performance_validation, per_era_corr, per_era_mmc)
+                            self.trained_models[next_number] = model_data
+                            trained_models_table_this_round_only[next_number_this_round] = model_data
+
+                    except Exception as e:
+                        print(f"Error storing model data: {e}")
+                        continue
+
+
+                # Get the current row count to start adding new rows
+                current_row_count = self.table_widget_multi_results.rowCount()
+
+                # Set the column count and headers if not already set
+                if self.table_widget_multi_results.columnCount() == 0:
+                    headers = list(results_df.columns) + ['']
+                    self.table_widget_multi_results.setColumnCount(len(headers))
+                    self.table_widget_multi_results.setHorizontalHeaderLabels(headers)
+                else:
+                    headers = [self.table_widget_multi_results.horizontalHeaderItem(i).text() for i in range(self.table_widget_multi_results.columnCount())]
+
+                # Iterate over trained models dictionary with an index starting from the current row count
+                for row_num, (index, (results_df, model, validation, Performance_validation,_,_)) in enumerate(trained_models_table_this_round_only.items(), start=current_row_count):
+                    self.table_widget_multi_results.insertRow(row_num)
+                    for j, value in enumerate(results_df.values.tolist()[0]):
+                        if results_df.columns[j] in ["corr_mean", "mmc_mean", "corr_std", "mmc_std", "corr_sharpe", "mmc_sharpe", "corr_max_drawdown", "mmc_max_drawdown"]:
+                            # Extract the float number using regular expressions
+                            match = re.search(r"[-+]?\d*\.\d+|\d+", str(value))
+                            if match:
+                                float_value = float(match.group())
+                                item = QTableWidgetItem(f'{float_value:.6f}')
+                                self.table_widget_multi_results.setItem(row_num, j, item)
+                            else:
+                                # Handle cases where no float number is found
+                                item = QTableWidgetItem()
+                                self.table_widget_multi_results.setItem(row_num, j, item)
+                        else:
+                            item = QTableWidgetItem(str(value))
+                            self.table_widget_multi_results.setItem(row_num, j, item)
+     
+                    button = QPushButton("View Model")
+                    button.clicked.connect(lambda checked, model=model, selected_feature_sets=selected_feature_sets: self.function_download_Live_predictions_for_a_row(model, selected_feature_sets))
+                    self.table_widget_multi_results.setCellWidget(row_num, len(headers) - 1, button)
+                    
+                self.body_widget.setCurrentIndex(2)
+            
+        except Exception as e:
+            QMessageBox.warning(self, f"Cells not balanced in numbers {hyperparameters_grid}: {e}")
+            raise RuntimeError("Results not generated due to entry error")
+        
+      
+    def function_download_Live_predictions_for_a_row(self, model ,selected_feature_sets):
+        if model is None or selected_feature_sets is None:
+            QMessageBox.warning(None, "Error", "Please train the model first.")
+            return None
+        
+        model_with_predict = ModelWithPredictMethod(model, selected_feature_sets)
 
         try:
-            if file_extension_feature_file == ".json":
-                with open(full_file_path_feature_file, 'r') as file:
-                    feature_metadata = json.load(file)
-                    selected_feature_sets = feature_metadata["feature_sets"][self.selected_feature_set]
+            # Pickle the entire ModelWithPredictMethod class
+            model_pickle = cloudpickle.dumps(model_with_predict.predict)
+            with open("model.pkl", "wb") as f:
+                f.write(model_pickle)
+            QMessageBox.information(None, "Success", "Model with predict method pickled successfully.")
         except Exception as e:
-            QMessageBox.warning(self, "Error", f"Error loading dataset: {e}")
-            return
-           
-        #Select Validation File 
-        Selected_Validation_File = self.list_widget_validation_downloaded_datasets.currentItem()
-        if not Selected_Validation_File:  # No item is selected
-            QMessageBox.warning(self, "Selection Required", "Please select a Validation int 8 file to proceed.")
-            return
-        
-        Selected_Validation_File = Selected_Validation_File.text()
-        file_extension_Validation_file = os.path.splitext(Selected_Validation_File)[1].lower()
-        
-        full_file_path_validation_file = os.path.join(self.dynamic_folder_path, Selected_Validation_File)
+            QMessageBox.warning(None, "Error", f"Error pickling model: {e}")
+               
 
-
-        try:
-            if file_extension_Validation_file == ".parquet":
-                validation = pd.read_parquet(full_file_path_validation_file, columns=["era" ,"data_type", "target"] + selected_feature_sets)
-            else:
-                raise ValueError("Unsupported file format.")
-        except Exception as e:
-            QMessageBox.warning(self, "Error", f"Error loading dataset: {e}")
-            return
-        
-        validation = validation[validation["data_type"] == "validation"]
-        del validation["data_type"]
-
-        # Eras are 1 week apart, but targets look 20 days (or 4 weeks/eras) into the future,
-        # so we need to "embargo" the first 4 eras following our last train era to avoid "data leakage"
-        last_train_era = int(self.read_parquet_train_file["era"].unique()[-1])
-        eras_to_embargo = [str(era).zfill(4) for era in [last_train_era + i for i in range(4)]]
-        validation = validation[~validation["era"].isin(eras_to_embargo)]
-        
-        self.fuction_parquet_data_into_table(validation,self.table_widget_validation_dataset)
-
-        # Generate predictions against the out-of-sample validation features
-        # This will take a few minutes
-        validation["prediction"] = self.trained_model.predict(validation[selected_feature_sets])
-        print(validation[["era", "prediction", "target"]])
-        
-        # Clear existing contents of the table widget
+    def setup_validation_results_table(self, validation):
         self.clear_table_widget(self.table_widget_validation_results)
-        
         # Set the column count and headers
         num_columns = 3  # era, prediction, target
         self.table_widget_validation_results.setColumnCount(num_columns + 1)  # Add 1 for the index column
@@ -1225,438 +1263,382 @@ class Platform(QWidget):
             self.table_widget_validation_results.setItem(row_num, 1, QTableWidgetItem(str(row["era"])))
             self.table_widget_validation_results.setItem(row_num, 2, QTableWidgetItem(str(row["prediction"])))
             self.table_widget_validation_results.setItem(row_num, 3, QTableWidgetItem(str(row["target"])))
-        
-        self.Validation_Model = validation
-        
-    def function_Button_Evaluate_Peforance_Model(self) -> None:
-        """
-        Performance Evaluation
-        """
-        #Select Peformance Model File 
-        Selected_Performance_Model_File = self.list_Widget_meta_model_datasets.currentItem()
-        if not Selected_Performance_Model_File:  # No item is selected
-            QMessageBox.warning(self, "Selection Required", "Please select a Validation int 8 file to proceed.")
-            return
-        
-        Selected_Performance_Model_File = Selected_Performance_Model_File.text()
-        file_extension_Training_file = os.path.splitext(Selected_Performance_Model_File)[1].lower()
-        
-        full_file_path_peformance_file = os.path.join(self.dynamic_folder_path, Selected_Performance_Model_File)
+                                                                                          
 
+    def train_lgb_model_with_hyperparameters(self, hyperparameters, selected_feature_sets, train):
+        """
+        Train a model with specified hyperparameters.
+
+        Args:
+            hyperparameters (dict): Dictionary containing hyperparameter values.
+            selected_feature_sets (list): List of selected feature sets.
+            train (pd.DataFrame): Training data.
+
+        Returns:
+            sklearn.base.BaseEstimator: Trained model.
+        """
         try:
-            if file_extension_Training_file == ".parquet":
-                self.Validation_Model["meta_model"]= pd.read_parquet(full_file_path_peformance_file)["numerai_meta_model"]
-                self.fuction_parquet_data_into_table(self.Validation_Model,self.table_widget_metamodel_performance_file)
-
-            else:
-                raise ValueError("Unsupported file format.")
+            # Train the model using the provided features and target data
+            model = LGBMRegressor(**hyperparameters)
+            model.fit(train[selected_feature_sets], train["target"])
+            return model
         except Exception as e:
-            QMessageBox.warning(self, "Error", f"Error loading dataset: {e}")
-            return
+            QMessageBox.warning(self, "Error", f"Error training model: {e}")
+            return None
+        
+
+        
+    def verify_load_validation_file_selected(self):
+        """
+        Loads validation data.
+
+        Returns:
+            str or None: File path of the selected validation file if successful, None otherwise.
+        """
+
+   
+        # Get the selected validation file and proceed with the rest of the code
+        selected_validation_file = self.list_widget_validation_downloaded_datasets.currentItem().text()
+        if not selected_validation_file:
+            QMessageBox.warning(self, "Selection Required", "Please select a validation file to proceed.")
+        return selected_validation_file
     
-        # # Compute the per-era corr between our predictions and the target values
-        # per_era_corr = self.Validation_Model.groupby("era").apply(
-        #     lambda x: numerai_corr(x[["prediction"]].dropna(), x["target"].dropna()),
-        #      include_groups=False
-        # )
+     
+    def load_validation_data(self, selected_feature_sets,selected_validation_file):
+        """
+        Loads validation data.
 
-        
-        # per_era_mmc = self.Validation_Model.dropna().groupby("era").apply(
-        #     lambda x: correlation_contribution(x[["prediction"]], x["meta_model"], x["target"]),
-        #     include_groups=False
-        # )
+        Returns:
+            str or None: File path of the selected validation file if successful, None otherwise.
+        """
+        file_extension_Validation_file = os.path.splitext(selected_validation_file)[1].lower()
+        full_file_path_validation_file = os.path.join(self.dynamic_folder_path, selected_validation_file)
 
-        # Compute the per-era corr between our predictions and the target values
-        per_era_corr = self.Validation_Model.groupby("era").apply(
-            lambda x: numerai_corr(x[["prediction"]].dropna(), x["target"].dropna())
-            )
-
-        
-        per_era_mmc = self.Validation_Model.dropna().groupby("era").apply(
-            lambda x: correlation_contribution(x[["prediction"]], x["meta_model"], x["target"]) 
-            )
-
-
-        # Compute performance metrics
-        corr_mean = per_era_corr.mean()
-        corr_std = per_era_corr.std(ddof=0)
-        corr_sharpe = corr_mean / corr_std
-        corr_max_drawdown = (per_era_corr.cumsum().expanding(min_periods=1).max() - per_era_corr.cumsum()).max()
-
-        mmc_mean = per_era_mmc.mean()
-        mmc_std = per_era_mmc.std(ddof=0)
-        mmc_sharpe = mmc_mean / mmc_std
-        mmc_max_drawdown = (per_era_mmc.cumsum().expanding(min_periods=1).max() - per_era_mmc.cumsum()).max()
-
-        # Create a DataFrame to hold the results
-        results_df = pd.DataFrame({
-            "mean": [corr_mean, mmc_mean],
-            "std": [corr_std, mmc_std],
-            "sharpe": [corr_sharpe, mmc_sharpe],
-            "max_drawdown": [corr_max_drawdown, mmc_max_drawdown]
-        }, index=["CORR", "MMC"]).T
-            
-        # Print the results DataFrame
-        print("Performance Metrics:")
-        print(results_df)    
-           
-        self.fuction_parquet_data_into_table(results_df,self.table_widget_performance_results)
-
-
-    def function_Button_Live_predictions_Model(self) -> None:
-        self.live_features_stored = None
-
-        Selected_Live_Model_File = self.list_Widget_Live_Prediction_Datasets.currentItem()
-        if not Selected_Live_Model_File:  # No item is selected
-            QMessageBox.warning(self, "Selection Required", "Please select a live file int 8 file to proceed.")
-            return
-        
-        Selected_Live_Model_File = Selected_Live_Model_File.text()
-        file_extension_Live_file = os.path.splitext(Selected_Live_Model_File)[1].lower()
-        
-        full_file_path_Live_file = os.path.join(self.dynamic_folder_path, Selected_Live_Model_File)
         try:
-            if file_extension_Live_file == ".parquet":
-                self.live_features_stored = pd.read_parquet(full_file_path_Live_file, columns=self.selected_feature_sets_all_features)
+            if file_extension_Validation_file == ".parquet":
+                validation = pd.read_parquet(full_file_path_validation_file, columns=["era" ,"data_type", "target"] + selected_feature_sets)
+                return validation
             else:
                 raise ValueError("Unsupported file format.")
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Error loading dataset: {e}")
             return
 
-        if self.trained_model is None or self.selected_feature_sets_all_features is None:
-            QMessageBox.warning(None, "Error", "Please train the model first.")
+
+    def verify_load_performance_metric_file_selected(self):
+        """
+        Loads the performance metric file.
+
+        Returns:
+            str or None: File path of the selected performance metric file if successful, None otherwise.
+        """     
+        # Get the selected performance metric file and proceed with the rest of the code
+        selected_performance_file = self.list_Widget_meta_model_datasets.currentItem().text()
+        if not selected_performance_file:
+            QMessageBox.warning(self, "Selection Required", "Please select a Performance file to proceed.")
+            return None
+        
+        return selected_performance_file
+
+    def load_performance_metric_file(self,validation,selected_performance_file):
+
+        file_extension_peformance_file = os.path.splitext(selected_performance_file)[1].lower()
+        full_file_path_peformance_file = os.path.join(self.dynamic_folder_path, selected_performance_file)
+        try:
+            if file_extension_peformance_file == ".parquet":
+                validation["meta_model"]= pd.read_parquet(full_file_path_peformance_file)["numerai_meta_model"]
+                self.fuction_parquet_data_into_table(validation,self.table_widget_metamodel_performance_file)
+                return validation
+            else:
+                raise ValueError("Unsupported file format.")
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Error loading dataset: {e}")
+            return
+                
+  
+
+    def load_training_data(self, selected_feature_sets):
+        """
+        Loads training data based on the selected feature sets.
+
+        Args:
+            self: Reference to the main class instance to access GUI elements.
+            selected_feature_sets (list): Selected feature sets.
+
+        Returns:
+            pd.DataFrame or None: Loaded training data if successful, None otherwise.
+        """
+        selected_training_file = self.list_widget_train_downloaded_datasets.currentItem()
+        if not selected_training_file:
+            QMessageBox.warning(self, "Selection Required", "Please select a training file to proceed.")
             return None
 
-        # Create an instance of ModelWithPredictMethod
-        model_with_predict = ModelWithPredictMethod(self.trained_model, self.selected_feature_sets_all_features)
+        selected_training_file = selected_training_file.text()
+        file_extension_training_file = os.path.splitext(selected_training_file)[1].lower()
+        full_file_path_training_file = os.path.join(self.dynamic_folder_path, selected_training_file)
 
         try:
-            # Pickle the entire ModelWithPredictMethod class
-            model_pickle = cloudpickle.dumps(model_with_predict.predict)
-            with open("model.pkl", "wb") as f:
-                f.write(model_pickle)
-            QMessageBox.information(None, "Success", "Model with predict method pickled successfully.")
+            if file_extension_training_file == ".parquet":
+                train = pd.read_parquet(full_file_path_training_file, columns=["era", "target"] + selected_feature_sets)
+                self.fuction_parquet_data_into_table(train, self.table_widget_train_dataset)
+                logging.debug('Loaded training data')
+                return train
+            else:
+                raise ValueError("Unsupported file format.")
         except Exception as e:
-            QMessageBox.warning(None, "Error", f"Error pickling model: {e}")
-            
+            QMessageBox.warning(self, "Error", f"Error loading dataset: {e}")
+            return None
+                
+     
+    def get_selected_feature_sets(self):
+        """
+        Retrieves the selected feature sets from the feature file.
 
-        # Generate live predictions
-        live_predictions = self.trained_model.predict(self.live_features_stored[self.selected_feature_sets_all_features])
-        # Format submission
-        live_predictions_dataframe = pd.Series(live_predictions, index=self.live_features_stored.index).to_frame("prediction")
-        
-        print("Predictions file downloaded")
-        # Print the results DataFrame
-        print("Live Predictions:")
-        print(live_predictions_dataframe)  
-       
-        # Save the DataFrame to a CSV file
-        csv_file_path = "live_predictions.csv"
-        live_predictions_dataframe.to_csv(csv_file_path)
+        Args:
+            self: Reference to the main class instance to access GUI elements.
 
-        print(f"Live predictions saved to {csv_file_path}")
-        
-                        
-             
-    def function_Multiple_Train_Buttons(self) -> None: 
-        # Clear trained file and model global parameters
-        self.read_parquet_train_file = None
-        self.trained_model = None
-        self.selected_feature_sets_all_features = None   
-        
-        # Verify modelling method algorithm selected by user 
-        selected_method = self.training_method_combo.currentText()
-        
-        if selected_method == "LGBMRegressor":
-            # Get hyperparameters values from GUI inputs
-            n_estimators_value = self.n_estimators.text()
-            learning_rate_value = self.learning_rate.text()
-            max_depth_value = self.max_depth.text()
-            num_leaves_value = self.num_leaves.text()
-            colsample_bytree_value = self.colsample_bytree.text()
-            
-            # Validate hyperparameters
-            if not all([n_estimators_value, learning_rate_value, max_depth_value, num_leaves_value, colsample_bytree_value]):
-                QMessageBox.warning(self, "Input Required", "Please fill in all hyperparameters.")
-                return None
-            
-            # Split user input based on delimiter
-            n_estimators_values = re.split(r'\s|[,;]', n_estimators_value)
-            learning_rate_values = re.split(r'\s|[,;]', learning_rate_value)
-            max_depth_values = re.split(r'\s|[,;]', max_depth_value)
-            num_leaves_values = re.split(r'\s|[,;]', num_leaves_value)
-            colsample_bytree_values = re.split(r'\s|[,;]', colsample_bytree_value)
-            
-            # Get the lengths of each parameter list
-            lengths = {
-                'n_estimators': len(n_estimators_values),
-                'learning_rate': len(learning_rate_values),
-                'max_depth': len(max_depth_values),
-                'num_leaves': len(num_leaves_values),
-                'colsample_bytree': len(colsample_bytree_values)
-            }
+        Returns:
+            list: Selected feature sets if successful.
+        """
+        if not self.selected_feature_set or not self.selected_feature_file:
+            QMessageBox.warning(self, "Selection Required", "Please select a Feature Set and a Feature File to proceed.")
+            return None
 
-            # Check if all lengths are equal
-            if len(set(lengths.values())) != 1:
-                print("Number of values for each hyperparameter is not equal.")
-                return False
+        file_extension_feature_file = os.path.splitext(self.selected_feature_file)[1].lower()
+        full_file_path_feature_file = os.path.join(self.dynamic_folder_path, self.selected_feature_file)
 
+        try:
+            if file_extension_feature_file == ".json":
+                with open(full_file_path_feature_file, 'r') as file:
+                    feature_metadata = json.load(file)
+                    selected_feature_sets = feature_metadata["feature_sets"][self.selected_feature_set]
+                    return selected_feature_sets
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Error loading dataset: {e}")
+            return None
+         
+    def create_HistGradientBoostingRegressor_hyperparameter_grid(self):
+        """
+        Creates a hyperparameter grid for LGBMRegressor based on user input.
+
+        Args:
+            self: Reference to the main class instance to access GUI elements.
+
+        Returns:
+            dict or None: Hyperparameter grid if successful, None otherwise.
+        """
+        # Get hyperparameters values from GUI inputs
+        max_iteration_value=self.max_iter_sci.text()
+        learning_rate_value = self.learning_rate_sci.text()
+        max_depth_value= self.max_depth_sci.text()
+        num_leaves_value=self.max_leaf_nodes_sci.text()
+        max_features_value = self.max_features_sci.text()
+    
+        # Validate hyperparameters
+        if not all([learning_rate_value, max_iteration_value, max_depth_value, num_leaves_value, max_features_value]):
+            QMessageBox.warning(self, "Input Required", "Please fill in all hyperparameters.")
+            return None
+
+        # Split user input based on delimiter
+        max_iteration_values= re.split(r'\s|[,;]', max_iteration_value)
+        learning_rate_values = re.split(r'\s|[,;]', learning_rate_value)
+        max_depth_values = re.split(r'\s|[,;]', max_depth_value)
+        num_leaves_values = re.split(r'\s|[,;]', num_leaves_value)
+        max_features_values = re.split(r'\s|[,;]', max_features_value)
+
+        # Get the lengths of each parameter list
+        lengths = {
+            'max_iter': len(max_iteration_values),
+            'learning_rate': len(learning_rate_values),
+            'max_depth': len(max_depth_values),
+            'max_leaf_nodes': len(num_leaves_values),
+            'max_features': len(max_features_values)
+        }
+
+
+        # Check if all lengths are equal
+        if len(set(lengths.values())) != 1:
+            print("Number of values for each hyperparameter is not equal.")
+            return None
+
+        try:
             # Create hyperparameters grid based on user input
             hyperparameters_grid = {
-                'n_estimators': [int(value) for value in n_estimators_values],
-                'learning_rate': [float(value) for value in learning_rate_values],
-                'max_depth': [int(value) for value in max_depth_values],
-                'num_leaves': [int(eval(value)) for value in num_leaves_values],
-                'colsample_bytree': [float(value) for value in colsample_bytree_values]
+                'max_iter': [],
+                'learning_rate': [],
+                'max_depth': [],
+                'max_leaf_nodes': [],
+                'max_features': []
             }
 
-
-            # Validate hyperparameters
-            if not all([n_estimators_value, learning_rate_value, max_depth_value, num_leaves_value, colsample_bytree_value]):
-                QMessageBox.warning(self, "Input Required", "Please fill in all hyperparameters.")
-                return None
-            
-            if not self.selected_feature_set or not self.selected_feature_file:
-                QMessageBox.warning(self, "Selection Required", "Please select a Feature Set and a Feature File to proceed.")
-                return
-            
-
-            # Create an empty DataFrame to store the results
-            results_df = pd.DataFrame(columns=['n_estimators', 'learning_rate', 'max_depth', 'num_leaves', 'colsample_bytree'])
-
-            # Create an empty list to store the results DataFrames
-            results_dfs = []
-        
-            # Clear trained file and model global parameters
-            self.read_parquet_train_file = None
-            self.trained_model = None
-            
-            if not self.selected_feature_set:  # No item is selected
-                QMessageBox.warning(self, "Selection Required", "Please select an Feature Set to proceed.")
-                return
-
-            if not self.selected_feature_file:  # No item is selected
-                QMessageBox.warning(self, "Selection Required", "Please select a featue file to proceed.")
-                return
-            
-            file_extension_feature_file = os.path.splitext(self.selected_feature_file)[1].lower()
-            full_file_path_feature_file = os.path.join(self.dynamic_folder_path, self.selected_feature_file)
-
-            try:
-                if file_extension_feature_file == ".json":
-                    with open(full_file_path_feature_file, 'r') as file:
-                        feature_metadata = json.load(file)
-                        selected_feature_sets = feature_metadata["feature_sets"][self.selected_feature_set]
-            except Exception as e:
-                QMessageBox.warning(self, "Error", f"Error loading dataset: {e}")
-                return
-
-            # Define feature set and download training data
-            selected_training_file =  self.list_widget_train_downloaded_datasets.currentItem()
-            if not selected_training_file:  # No item is selected
-                QMessageBox.warning(self, "Selection Required", "Please select a training int 8 file to proceed.")
-                return
-            
-            selected_training_file = selected_training_file.text()
-            file_extension_training_file = os.path.splitext(selected_training_file)[1].lower()
-            full_file_path_training_file = os.path.join(self.dynamic_folder_path, selected_training_file)
-            
-            try:
-                if file_extension_training_file == ".parquet":
-                    train = pd.read_parquet(full_file_path_training_file, columns=["era", "target"] + selected_feature_sets)
-                    self.fuction_parquet_data_into_table(train,self.table_widget_train_dataset)
-                else:
-                    raise ValueError("Unsupported file format.")
-            except Exception as e:
-                QMessageBox.warning(self, "Error", f"Error loading dataset: {e}")
-                return        
-            
-                        # Set the current index to activate body_widget
-            self.body_widget.setCurrentIndex(1)
-            
-            # Ask the user to ensure a validation file type is selected
-            reply = QMessageBox.question(self, 'Validation File Selection', 'Please ensure a validation file type is selected before continuing. Continue to select your file?', QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if reply == QMessageBox.No:
-                return None
-
-            # Wait for the user to select a validation file
-            while not self.list_widget_validation_downloaded_datasets.currentItem():
-                QApplication.processEvents()
-
-            # Get the selected validation file and proceed with the rest of the code
-            selected_validation_file = self.list_widget_validation_downloaded_datasets.currentItem().text()
-            print("Selected Validation File:", selected_validation_file)
-
-            # Set the current index to activate body_widget
-            self.body_widget.setCurrentIndex(2)
-
-            # Ask the user to ensure a validation file type is selected
-            reply = QMessageBox.question(self, 'Performance Metric File Selection', 'Please ensure a Metric Performance file type is selected before continuing. Continue to select your file?', QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if reply == QMessageBox.No:
-                return None
-
-            # Wait for the user to select a meta model file
-            while not self.list_Widget_meta_model_datasets.currentItem():
-                QApplication.processEvents()
-                
-            # Get the selected validation file and proceed with the rest of the code
-            selected_peformance_file = self.list_Widget_meta_model_datasets.currentItem().text()
-            print("Selected peformance File:", selected_peformance_file)
-        
-            # Iterate over the hyperparameters grid
-            for i in range(len(hyperparameters_grid['n_estimators'])):
-                # Extract hyperparameters for this iteration
-                n_estimators = hyperparameters_grid['n_estimators'][i]
-                learning_rate = hyperparameters_grid['learning_rate'][i]
-                max_depth = hyperparameters_grid['max_depth'][i]
-                num_leaves = hyperparameters_grid['num_leaves'][i]
-                colsample_bytree = hyperparameters_grid['colsample_bytree'][i]
-        
-                n_estimators_value = n_estimators
-                learning_rate_value= learning_rate
-                max_depth_value= max_depth
-                num_leaves_value= num_leaves
-                colsample_bytree_value =colsample_bytree
-            
-                # Convert hyperparameters to appropriate types
+            # Check type correspondences for each value and add them to the hyperparameters grid
+            for value in max_iteration_values:
                 try:
-                    hyperparameters = {
-                        'n_estimators': int(n_estimators_value),
-                        'learning_rate': float(learning_rate_value),
-                        'max_depth': int(max_depth_value),
-                        'num_leaves': int(num_leaves_value),
-                        'colsample_bytree': float(colsample_bytree_value)
-                    }
-                    # Use retrieved values to train the model
-                    print("Training model with hyperparameters:", hyperparameters)
-
+                    hyperparameters_grid['max_iter'].append(int(value))
                 except ValueError:
-                    QMessageBox.warning(self, "Invalid Input", "Please enter valid hyperparameter values.")
+                    error_message = f"Error: '{value}' is not a valid integer for 'max_iter'."
+                    QMessageBox.warning(self, "Input Error", error_message)
                     return None
 
-                # Train the model using the provided features and target data
-                model = LGBMRegressor(**hyperparameters)
-                model.fit(train[selected_feature_sets],train["target"])
-                
-                # Save trained model and training data for use in next steps
-                self.read_parquet_train_file = train
-                self.trained_model = model
-                print("Model Training for LGB Regressor Ended")
-                print("Cycle")
-        
-
-
-                self.function_Button_Validate_Model()
-                
-                """
-                Performance Evaluation
-                """
-                #Select Peformance Model File 
-                Selected_Performance_Model_File = self.list_Widget_meta_model_datasets.currentItem()
-                
-                if not Selected_Performance_Model_File:  # No item is selected
-                    QMessageBox.warning(self, "Selection Required", "Please select a Validation int 8 file to proceed.")
-                    return
-                
-                Selected_Performance_Model_File = Selected_Performance_Model_File.text()
-                file_extension_peformance_file = os.path.splitext(Selected_Performance_Model_File)[1].lower()
-                full_file_path_peformance_file = os.path.join(self.dynamic_folder_path, Selected_Performance_Model_File)
+            for value in learning_rate_values:
                 try:
-                    if file_extension_peformance_file == ".parquet":
-                        self.Validation_Model["meta_model"]= pd.read_parquet(full_file_path_peformance_file)["numerai_meta_model"]
-                        self.fuction_parquet_data_into_table(self.Validation_Model,self.table_widget_metamodel_performance_file)
+                    hyperparameters_grid['learning_rate'].append(float(value))
+                except ValueError:
+                    error_message = f"Error: '{value}' is not a valid float for 'learning_rate'."
+                    QMessageBox.warning(self, "Input Error", error_message)
+                    return None
 
-                    else:
-                        raise ValueError("Unsupported file format.")
-                except Exception as e:
-                    QMessageBox.warning(self, "Error", f"Error loading dataset: {e}")
-                    return
+            for value in max_depth_values:
+                try:
+                    hyperparameters_grid['max_depth'].append(int(value))
+                except ValueError:
+                    error_message = f"Error: '{value}' is not a valid integer for 'max_depth'."
+                    QMessageBox.warning(self, "Input Error", error_message)
+                    return None
+
+            for value in num_leaves_values:
+                try:
+                    hyperparameters_grid['max_leaf_nodes'].append(int(eval(value)))
+                except (ValueError, TypeError, NameError, SyntaxError):
+                    error_message = f"Error: '{value}' is not a valid expression for 'max_leaf_nodes'."
+                    QMessageBox.warning(self, "Input Error", error_message)
+                    return None
+
+            for value in max_features_values:
+                try:
+                    hyperparameters_grid['max_features'].append(float(value))
+                except ValueError:
+                    error_message = f"Error: '{value}' is not a valid float for 'max_features'."
+                    QMessageBox.warning(self, "Input Error", error_message)
+                    return None
+
+        except Exception as e:
+            error_message = f"Unexpected error: {e}"
+            QMessageBox.warning(self, "Error", error_message)
+            return None
+
+    
+        self.max_iter_sci.clear()
+        self.learning_rate_sci.clear()
+        self.max_depth_sci.clear()
+        self.max_leaf_nodes_sci.clear()
+        self.max_features_sci.clear()
+        
+        return hyperparameters_grid     
+      
+                                 
+    def create_lgbm_hyperparameter_grid(self):
+        """
+        Creates a hyperparameter grid for LGBMRegressor based on user input.
+
+        Args:
+            self: Reference to the main class instance to access GUI elements.
+
+        Returns:
+            dict or None: Hyperparameter grid if successful, None otherwise.
+        """
+        # Get hyperparameters values from GUI inputs
+        n_estimators_value = self.n_estimators.text()
+        learning_rate_value = self.learning_rate.text()
+        max_depth_value = self.max_depth.text()
+        num_leaves_value = self.num_leaves.text()
+        colsample_bytree_value = self.colsample_bytree.text()
+
+        # Validate hyperparameters
+        if not all([n_estimators_value, learning_rate_value, max_depth_value, num_leaves_value, colsample_bytree_value]):
+            QMessageBox.warning(self, "Input Required", "Please fill in all hyperparameters.")
+            return None
+
+        # Split user input based on delimiter
+        n_estimators_values = re.split(r'\s|[,;]', n_estimators_value)
+        learning_rate_values = re.split(r'\s|[,;]', learning_rate_value)
+        max_depth_values = re.split(r'\s|[,;]', max_depth_value)
+        num_leaves_values = re.split(r'\s|[,;]', num_leaves_value)
+        colsample_bytree_values = re.split(r'\s|[,;]', colsample_bytree_value)
+
+        # Get the lengths of each parameter list
+        lengths = {
+            'n_estimators': len(n_estimators_values),
+            'learning_rate': len(learning_rate_values),
+            'max_depth': len(max_depth_values),
+            'num_leaves': len(num_leaves_values),
+            'colsample_bytree': len(colsample_bytree_values)
+        }
+
+        # Check if all lengths are equal
+        if len(set(lengths.values())) != 1:
+            print("Number of values for each hyperparameter is not equal.")
+            return None
+                
+        try:
+            # Create hyperparameters grid based on user input
+            hyperparameters_grid = {
+                'n_estimators': [],
+                'learning_rate': [],
+                'max_depth': [],
+                'num_leaves': [],
+                'colsample_bytree': []
+            }
+
+            # Check type correspondences for each value and add them to the hyperparameters grid
+            for value in n_estimators_values:
+                try:
+                    hyperparameters_grid['n_estimators'].append(int(value))
+                except ValueError:
+                    error_message = f"Error: '{value}' is not a valid integer for 'n_estimators'."
+                    QMessageBox.warning(self, "Input Error", error_message)
+                    return None
+
+            for value in learning_rate_values:
+                try:
+                    hyperparameters_grid['learning_rate'].append(float(value))
+                except ValueError:
+                    error_message = f"Error: '{value}' is not a valid float for 'learning_rate'."
+                    QMessageBox.warning(self, "Input Error", error_message)
+                    return None
+
+            for value in max_depth_values:
+                try:
+                    hyperparameters_grid['max_depth'].append(int(value))
+                except ValueError:
+                    error_message = f"Error: '{value}' is not a valid integer for 'max_depth'."
+                    QMessageBox.warning(self, "Input Error", error_message)
+                    return None
+
+            for value in num_leaves_values:
+                try:
+                    hyperparameters_grid['num_leaves'].append(int(eval(value)))
+                except (ValueError, TypeError, NameError, SyntaxError):
+                    error_message = f"Error: '{value}' is not a valid expression for 'num_leaves'."
+                    QMessageBox.warning(self, "Input Error", error_message)
+                    return None
+
+            for value in colsample_bytree_values:
+                if value.strip():  # Check if the value is not an empty string
+                    try:
+                        hyperparameters_grid['colsample_bytree'].append(float(value))
+                    except ValueError:
+                        error_message = f"Error: '{value}' is not a valid float for 'colsample_bytree'."
+                        QMessageBox.warning(self, "Input Error", error_message)
+                        return None
+                else:
+                    error_message = "Error: Empty string found in 'colsample_bytree_values'. Please provide a valid float value."
+                    QMessageBox.warning(self, "Input Error", error_message)
+                    return None
+
+        except Exception as e:
+            error_message = f"Unexpected error: {e}"
+            QMessageBox.warning(self, "Error", error_message)
+            return None
             
-                # # Compute the per-era corr between our predictions and the target values
-                # per_era_corr = self.Validation_Model.groupby("era").apply(
-                #     lambda x: numerai_corr(x[["prediction"]].dropna(), x["target"].dropna()),
-                #     include_groups=False
-                # )
 
-                
-                # per_era_mmc = self.Validation_Model.dropna().groupby("era").apply(
-                #     lambda x: correlation_contribution(x[["prediction"]], x["meta_model"], x["target"]),
-                #     include_groups=False
-                # )
-                
-                # Compute the per-era corr between our predictions and the target values
-                per_era_corr = self.Validation_Model.groupby("era").apply(
-                    lambda x: numerai_corr(x[["prediction"]].dropna(), x["target"].dropna())
-            
-                )
+        self.n_estimators.clear()
+        self.learning_rate.clear()
+        self.max_depth.clear()
+        self.num_leaves.clear()
+        self.colsample_bytree.clear()
 
-                
-                per_era_mmc = self.Validation_Model.dropna().groupby("era").apply(
-                    lambda x: correlation_contribution(x[["prediction"]], x["meta_model"], x["target"])
-                )
-                
-
-                # Compute performance metrics
-                corr_mean = per_era_corr.mean()
-                corr_std = per_era_corr.std(ddof=0)
-                corr_sharpe = corr_mean / corr_std
-                corr_max_drawdown = (per_era_corr.cumsum().expanding(min_periods=1).max() - per_era_corr.cumsum()).max()
-
-                mmc_mean = per_era_mmc.mean()
-                mmc_std = per_era_mmc.std(ddof=0)
-                mmc_sharpe = mmc_mean / mmc_std
-                mmc_max_drawdown = (per_era_mmc.cumsum().expanding(min_periods=1).max() - per_era_mmc.cumsum()).max()
-
-                # Create a DataFrame to hold the results
-                results_df = pd.DataFrame({
-                    'n_estimators': [n_estimators],
-                    'learning_rate': [learning_rate],
-                    'max_depth': [max_depth],
-                    'num_leaves': [num_leaves],
-                    'colsample_bytree': [colsample_bytree],
-                    "corr_mean": [corr_mean],
-                    "mmc_mean": [mmc_mean],
-                    "corr_std": [corr_std],
-                    "mmc_std": [mmc_std],
-                    "corr_sharpe": [corr_sharpe],
-                    "mmc_sharpe": [mmc_sharpe],
-                    "corr_max_drawdown": [corr_max_drawdown],
-                    "mmc_max_drawdown": [mmc_max_drawdown]
-                })
-                                
-                # Append the results DataFrame to the list
-                results_dfs.append(results_df)
-
-            # Concatenate all results DataFrames into a single DataFrame
-            results_df = pd.concat(results_dfs, ignore_index=True)
-
-            # Clear existing contents of the table widget
-            self.clear_table_widget(self.table_widget_multi_results)
-
-
-
-            # Set the column count and headers
-            self.table_widget_multi_results.setColumnCount(len(results_df.columns))
-            headers = list(results_df.columns)
-            self.table_widget_multi_results.setHorizontalHeaderLabels(headers)
-
-            
-            for row_num, (index, row) in enumerate(results_df.iterrows()):
-                self.table_widget_multi_results.insertRow(row_num)
-                # self.table_widget_multi_results.setItem(row_num, 0, QTableWidgetItem(str(index)))
-
-                for j, value in enumerate(row):
-                    item = QTableWidgetItem(str(value))
-                    self.table_widget_multi_results.setItem(row_num, j, item)
-                    
-
-            # Set the current index to activate body_widget
-            self.body_widget.setCurrentIndex(3)
-
-            # Save the results to a log file
-            results_df.to_csv('hyperparameter_results.csv', index=False)
-                                            
+        return hyperparameters_grid                                            
            
 
 class ModelWithPredictMethod:
@@ -1714,100 +1696,33 @@ class app_Initializer:
         self.platform.show()
         sys.exit(self.app.exec())  # Call exec_() on the QApplication instance
 
-    # def setup_styles(self):
-    #     button_style = '''
-    #         QPushButton {
-    #             background-color: #474385;
-    #             color: #E5E5ED;
-    #             font-family: Noto Sans Tangsa;
-    #             font-size: 16px;
-    #         }
-    #     '''
-    #     label_style = '''
-    #         QLabel {
-    #             background-color: #EEEEF1;
-    #             color: #050505;
-    #             font-family: Noto Sans Tangsa;
-    #             font-size: 12px;
-    #         }
-    #     '''
-    #     list_widget_style = '''
-    #         QListWidget {
-    #             background-color:#DCDBEA;
-    #             color:#616065;
-    #             font-family: Noto Sans Tangsa;
-    #             font-size: 12px;
-    #         }
-    #     '''
-    #     tab_style = '''
-    #         QTabWidget::pane {
-    #             border: none;
-    #             background-color: #DCDBEA;
-    #         }
-    #         QTabWidget::tab-bar {
-    #             alignment: center;
-    #             color: #F6F6F9;
-    #         }
-    #         QTabWidget::tab {
-    #             background-color:#DCDBEA;
-    #             color: #050505;
-    #             font-family: Helvetica;
-    #             font-size: 12px;
-    #             padding: 10px;
-    #         }
-    #         QTabBar::tab {
-    #             background-color: #DCDBEA;
-    #             color: #050505;
-    #             font-family: Helvetica;
-    #             font-size: 12px;
-    #             padding: 10px;
-    #         }
-    #         QTabBar::tab:selected {
-    #             background-color:#DCDBEA;
-    #             color: #050505;
-    #         }
-    #     '''
-    #     textedit_style = '''
-    #         QTextEdit {
-    #             background-color: #DCDBEA;
-    #             color: #15141A;
-    #             font-family: Noto Sans Tangsa;
-    #             font-size: 12px;
-    #             border: none;
-    #             padding: 10px;
-    #         }
-    #     '''
-    #     lineedit_tablewidget_style = '''
-    #         QLineEdit, QTableWidget {
-    #             background-color: #DCDBEA;
-    #             color: #616065;
-    #             font-family: Noto Sans Tangsa;
-    #             font-size: 12px;
-    #         }
-    #     '''
-    #     # Style for QComboBox
-    #     combobox_style = '''
-    #         QComboBox {
-    #             background-color: #DCDBEA;
-    #             color: #15141A;
-    #             font-family: Noto Sans Tangsa;
-    #             font-size: 12px;
-    #             border: none;
-    #             padding: 5px;
-    #         }
-    #     '''
+class DelimitedValidator(QValidator):
+    def __init__(self, parent=None):
+        super().__init__(parent)
 
-    #     # Combine all style definitions into one stylesheet string
-    #     stylesheet = f'''
-    #         Platform {{
-    #             background-color: #EEEEF1;
-    #         }}
-    #     {button_style}{label_style}{list_widget_style}{tab_style}{textedit_style}{lineedit_tablewidget_style}{combobox_style}
-    #     '''
+        self.previous_char_digit = True  # Flag to track if the previous character was a digit
 
-    #     # Apply the stylesheet to the app
-    #     self.app.setStyleSheet(stylesheet)
+    def validate(self, input_, state):
+        """Validates the input string."""
 
+        # Ignore the state (no Locale check)
+        # Check if input is empty
+        if not input_:
+            return QValidator.Acceptable
+
+        # Check for alphabets and whitespace only
+        if any(char.isspace() or char.isalpha() for char in input_):
+            return QValidator.Invalid
+
+        return QValidator.Acceptable
+
+    def fixup(self, input_):
+        """Fixes up the input string if necessary."""
+
+        if not input_:
+            return ""
+
+        return input_
 
 
 # Your Platform class and other classes go here
@@ -1816,252 +1731,3 @@ if __name__ == "__main__":
     initializer = app_Initializer(app)
     initializer.start()
 
-
-
-                                      
-    # def initialize_Column_1_Train_Data_Set_Layout(self)-> None:
-    #     """
-    #     Initializes the layout for Column 1, allowing users to view and download available datasets.
-    #     """
-    #     # Column 1 : View and download available Datasets from Numerai
-    #     column_1_layout_internal = QVBoxLayout()
-
-    #     # Create download button
-    #     self.button_download_data_set_selected = self.function_create_button("Complete Cycle", column_1_layout_internal, self.function_Multiple_Train_Buttons)
-        
-    #     # Create Label for available datasets
-    #     self.function_create_label("NUMERAI Available Datasets", column_1_layout_internal)
-       
-    #     #Create a listwidget to house the Datasets available to download
-    #     self.list_widget_all_datasets = QListWidget()
-    #     self.list_widget_all_datasets.setSelectionMode(QAbstractItemView.MultiSelection)
-    #     column_1_layout_internal.addWidget(self.list_widget_all_datasets)
-        
-    #     # Create download button
-    #     self.button_download_data_set_selected = self.function_create_button("Downloaded Selected Datasets", column_1_layout_internal, self.function_button_download_selected_dataset)
-
-    #     # Create label for downloaded datasets    
-    #     self.function_create_label("Datasets Downloadeds", column_1_layout_internal)
-        
-    #     #Create a listwidget to house the Datasets available to download
-    #     self.list_Widget_Availabile_Downloaded_Datasets = QListWidget()
-    #     self.function_update_downloaded_datasets_list() #Fuction
-    #     column_1_layout_internal.addWidget(self.list_Widget_Availabile_Downloaded_Datasets)
-
-    #     # Section for Features Dataset List       
-    #     self.function_create_label("Features List - Select One", column_1_layout_internal)
-    #     self.list_Widget_Features_Downloaded_Datasets= QListWidget()
-    #     column_1_layout_internal.addWidget(self.list_Widget_Features_Downloaded_Datasets)
-        
-    #     self.list_Widget_Features_Downloaded_Datasets.itemClicked.connect(self.function_display_feature_list)  
-
-    #     # Section for Content of Feature List      
-    #     self.function_create_label("Features List Contents - Select One", column_1_layout_internal)
-    #     self.list_widget_features_content= QListWidget()
-    #     column_1_layout_internal.addWidget(self.list_widget_features_content)
-
-    #     # Section for Metadata Display
-    #     self.metadata_widget = QWidget()  
-    #     metadata_layout = QVBoxLayout()    
-    #     self.metadata_widget.setLayout(metadata_layout)
-    #     column_1_layout_internal.addWidget(self.metadata_widget)  
-        
-    #     self.list_widget_features_content.itemClicked.connect(self.function_handle_feature_list_change)
-        
-    #     # Add internal layout to the main layout
-    #     self.Column_1_Train_set_layout.addLayout(column_1_layout_internal)
-    
-    #     self.function_hide_widgets_in_layout(self.Column_1_Train_set_layout)
-        
-            
-    # def initialize_Column_2_View_Data_Set_Layout(self) -> None:
-    #     """
-    #     Initializes the layout for Column 2 to display training and validation datasets,
-    #     including a metadata section for selected datasets.
-    #     """
-    #     column_2_layout_internal = QVBoxLayout()
-        
-    #     # Section for Training Dataset List       
-    #     self.function_create_label("Training Dataset List:", column_2_layout_internal)
-    #     self.list_widget_train_downloaded_datasets = QListWidget()
-    #     column_2_layout_internal.addWidget(self.list_widget_train_downloaded_datasets)
-        
-    #     # List of available training methods Q ComboBox
-    #     self.function_create_label("Select Training Module:", column_2_layout_internal)
-    #     self.training_methods = ["LGBMRegressor", "HistGradientBoostingRegressor"]  
-    #     self.training_method_combo = QComboBox()
-    #     self.training_method_combo.addItems(self.training_methods)
-    #     column_2_layout_internal.addWidget(self.training_method_combo)
-
-    #     # Connect signal for combobox selection change
-    #     self.training_method_combo.currentIndexChanged.connect(self.function_training_method_changed)
-        
-    #     # Create layout for LGBMRegressor hyperparameters
-    #     self.hyperparameters_layout_LGM = QVBoxLayout()
-    #     widgets_LGM = []  # List to store widgets for LGBMRegressor parameters
-        
-    #     self.function_create_label("Number of boosted trees to fit", self.hyperparameters_layout_LGM)
-    #     self.n_estimators = QLineEdit()
-    #     self.n_estimators.setPlaceholderText("2000")
-    #     self.hyperparameters_layout_LGM.addWidget(self.n_estimators)
-    #     widgets_LGM.append(self.n_estimators)
-        
-    #     self.function_create_label("Boosting learning rate", self.hyperparameters_layout_LGM)
-    #     self.learning_rate = QLineEdit()
-    #     self.learning_rate.setPlaceholderText("0.01")
-    #     self.hyperparameters_layout_LGM.addWidget(self.learning_rate)
-    #     widgets_LGM.append(self.learning_rate)
-        
-    #     self.function_create_label("Maximum tree depth for base learners", self.hyperparameters_layout_LGM)
-    #     self.max_depth = QLineEdit()
-    #     self.max_depth.setPlaceholderText("5")
-    #     self.hyperparameters_layout_LGM.addWidget(self.max_depth)
-    #     widgets_LGM.append(self.max_depth)
-        
-    #     self.function_create_label("Maximum tree leaves for base learners", self.hyperparameters_layout_LGM)
-    #     self.num_leaves = QLineEdit()
-    #     self.num_leaves.setPlaceholderText("2**5-1")
-    #     self.hyperparameters_layout_LGM.addWidget(self.num_leaves)
-    #     widgets_LGM.append(self.num_leaves)
-        
-    #     self.function_create_label("Subsample ratio of columns when constructing each tree", self.hyperparameters_layout_LGM)
-    #     self.colsample_bytree = QLineEdit()
-    #     self.colsample_bytree.setPlaceholderText("0.1")
-    #     self.hyperparameters_layout_LGM.addWidget(self.colsample_bytree)
-    #     widgets_LGM.append(self.colsample_bytree)
-        
-        
-    #     column_2_layout_internal.addLayout(self.hyperparameters_layout_LGM)
-
-    #     # Create layout for Scitkit hyperparameters
-    #     self.hyperparameters_layout_HistGradientBoostingRegressor = QVBoxLayout()
-    #     widgets_HGBR =[]   # Dictionary to store widgets for Scikit regressor parameters
-
-    #     self.function_create_label("Learning Rate", self.hyperparameters_layout_HistGradientBoostingRegressor)
-    #     self.learning_rate_sci = QLineEdit()
-    #     self.learning_rate_sci.setPlaceholderText("0.1")
-    #     self.hyperparameters_layout_HistGradientBoostingRegressor.addWidget(self.learning_rate_sci)
-    #     widgets_HGBR.append(self.learning_rate_sci)
-        
-    #     self.function_create_label("Max Number of Trees", self.hyperparameters_layout_HistGradientBoostingRegressor)
-    #     self.max_iter_sci = QLineEdit()
-    #     self.max_iter_sci.setPlaceholderText("100")
-    #     self.hyperparameters_layout_HistGradientBoostingRegressor.addWidget(self.max_iter_sci)
-    #     widgets_HGBR.append(self.max_iter_sci )        
-        
-    #     self.function_create_label("Max Num of leaves per Tree", self.hyperparameters_layout_HistGradientBoostingRegressor)
-    #     self.max_leaf_nodes_sci = QLineEdit()
-    #     self.max_leaf_nodes_sci.setPlaceholderText("31")
-    #     self.hyperparameters_layout_HistGradientBoostingRegressor.addWidget(self.max_leaf_nodes_sci)
-    #     widgets_HGBR.append(self.max_leaf_nodes_sci)    
-        
-    #     self.function_create_label("Max Depth of Tree", self.hyperparameters_layout_HistGradientBoostingRegressor)
-    #     self.max_depth_sci = QLineEdit()
-    #     self.max_depth_sci.setPlaceholderText("None")
-    #     self.hyperparameters_layout_HistGradientBoostingRegressor.addWidget(self.max_depth_sci)
-    #     widgets_HGBR.append(self.max_depth_sci)    
-        
-    #     self.function_create_label("Proportion of random chosen features in each node split", self.hyperparameters_layout_HistGradientBoostingRegressor)
-    #     self.max_features_sci = QLineEdit()
-    #     self.max_features_sci.setPlaceholderText("0.1")
-    #     self.hyperparameters_layout_HistGradientBoostingRegressor.addWidget(self.max_features_sci)
-    #     widgets_HGBR.append(self.max_features_sci)    
-        
-    #     # Initially hide the layout for "Other" hyperparameters
-    #     for i in range(self.hyperparameters_layout_HistGradientBoostingRegressor.count()):
-    #         widget = self.hyperparameters_layout_HistGradientBoostingRegressor.itemAt(i).widget()
-    #         if widget:
-    #             widget.hide()
-        
-    #     column_2_layout_internal.addLayout(self.hyperparameters_layout_HistGradientBoostingRegressor)
-
-    #     # Create download button
-    #     self.button_download_data_set_selected = self.function_create_button("Train", column_2_layout_internal, self.function_Button_Train_Model)
-        
-    #     self.function_create_label("First 50 Rows Training", column_2_layout_internal)
-    #     self.table_widget_train_dataset = QTableWidget()
-    #     column_2_layout_internal.addWidget(self.table_widget_train_dataset)
-        
-    #     # Set the layout for the column
-    #     self.Column_2_view_data_set_layout.addLayout(column_2_layout_internal)
-    #     self.function_hide_widgets_in_layout(self.Column_2_view_data_set_layout)
-        
-    # def initialize_Column_3_Modelling_Data_Set_Layout(self)-> None:
-    #     """
-    #     Initializes the layout for Column 3 to display validation datasets and associated metadata,
-    #     as well as a table for dataset validation.
-    #     """
-    #     # Create the internal layout for Column 3
-    #     column_3_layout_internal = QVBoxLayout()
-        
-    #     # Section for Validation Dataset List      
-    #     self.function_create_label("Validation list:", column_3_layout_internal)
-    #     self.list_widget_validation_downloaded_datasets= QListWidget()        
-    #     column_3_layout_internal.addWidget(self.list_widget_validation_downloaded_datasets)
-        
-    #     # Create Validate button
-    #     self.button_validate_data_Set_selected = self.function_create_button("Validate", column_3_layout_internal, self.function_Button_Validate_Model)
-      
-    #     self.function_create_label("First 50 Rows Validation Table", column_3_layout_internal)
-    #     self.table_widget_validation_dataset = QTableWidget()
-    #     column_3_layout_internal.addWidget(self.table_widget_validation_dataset)
-        
-    #     self.function_create_label("Validation Results Table", column_3_layout_internal)
-    #     self.table_widget_validation_results = QTableWidget()
-    #     column_3_layout_internal.addWidget(self.table_widget_validation_results)
-                
-    #     # Set the layout for the column
-    #     self.Column_3_modelling_data_set_layout.addLayout(column_3_layout_internal)
-    #     self.function_hide_widgets_in_layout(self.Column_3_modelling_data_set_layout)
-        
-    # def initialize_column_4_live_model_layout(self)-> None:
-        # column_4_layout_internal = QVBoxLayout()
-        
-        # # Section for Validation list
-        # self.function_create_label("Performance metrics List:", column_4_layout_internal)
-        # self.list_Widget_meta_model_datasets = QListWidget()
-        # column_4_layout_internal.addWidget(self.list_Widget_meta_model_datasets)
-        
-        # # Create Peformance Evaluation button
-        # self.button_performance_evaluation_data_set_selected = self.function_create_button("Performance Evaluation", column_4_layout_internal, self.function_Button_Evaluate_Peforance_Model)
-        
-        # #Table for the meta model perforance metricx
-        # self.function_create_label("Meta Model Performance Table", column_4_layout_internal)
-        # self.table_widget_metamodel_performance_file = QTableWidget()
-        # column_4_layout_internal.addWidget(self.table_widget_metamodel_performance_file)
-        
-        # self.function_create_label("Validation Results Table", column_4_layout_internal)
-        # self.table_widget_performance_results = QTableWidget()
-        # column_4_layout_internal.addWidget(self.table_widget_performance_results)
-          
-        # # Section for Live Prediction List
-        # self.function_create_label("Live Prediction List:", column_4_layout_internal)
-        # self.list_Widget_Live_Prediction_Datasets = QListWidget()
-        # column_4_layout_internal.addWidget(self.list_Widget_Live_Prediction_Datasets)        
-        
-        # # Create Peformance Evaluation button
-        # self.button_Live_Prediction_Data_Set_Selected = self.function_create_button("Live Prediction:", column_4_layout_internal, self.function_Button_Live_predictions_Model)     
-   
-        # # Set the layout for the column
-        # self.Column_4_live_model_layout.addLayout(column_4_layout_internal)
-        # self.function_hide_widgets_in_layout(self.Column_4_live_model_layout)
-        
-    # def initialize_column_5_debugger_layout(self)-> None:
-    #     # Add the QTextEdit widget to the debugger layout in Column 4
-    #     self.Column_5_debugger_layout.addWidget(self.terminal_widget)
-    
-    
-        # def function_cleanup_sandbox(self)->None:
-    #     try:
-    #         # Delete sandbox directory and its contents
-    #         shutil.rmtree(self.sandbox_dir)
-    #         logging.info("Sandbox directory cleanup completed.")
-    #     except FileNotFoundError:
-    #         logging.warning("Sandbox directory not found.")
-    #     except PermissionError:
-    #         logging.error("Permission denied. Unable to delete sandbox directory.")
-    #     except Exception as e:
-    #         logging.error(f"An error occurred during cleanup: {e}")
-    #     else:
-    #         print("Cleanup completed.")
- 
